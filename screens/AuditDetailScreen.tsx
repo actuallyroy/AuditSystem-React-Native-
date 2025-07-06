@@ -1,318 +1,392 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  ScrollView, 
+  TouchableOpacity, 
+  ActivityIndicator,
+  Alert
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAuth } from '../contexts/AuthContext';
+import { authService, Assignment, TemplateDetails } from '../services/AuthService';
+import { auditService } from '../services/AuditService';
 
-// Mock audit data
-const mockAuditDetails = {
-  '1': {
-    id: '1',
-    storeName: 'SuperMart Downtown',
-    address: '123 Main St, Downtown',
-    dueDate: '2025-06-30',
-    priority: 'High',
-    status: 'Assigned',
-    storeManager: 'Sarah Johnson',
-    contactNumber: '+1 (555) 123-4567',
-    lastAudit: '2025-03-15',
-    lastScore: 88,
-    sections: [
-      {
-        id: 's1',
-        title: 'Store Exterior',
-        description: 'Assess the exterior appearance and signage',
-        questionCount: 8,
-        completed: false
-      },
-      {
-        id: 's2',
-        title: 'Entrance & Lobby',
-        description: 'Check entrance cleanliness and customer welcome area',
-        questionCount: 6,
-        completed: false
-      },
-      {
-        id: 's3',
-        title: 'Product Placement',
-        description: 'Verify product placement according to planogram',
-        questionCount: 15,
-        completed: false
-      },
-      {
-        id: 's4',
-        title: 'Pricing & Promotions',
-        description: 'Check price tags and promotional materials',
-        questionCount: 10,
-        completed: false
-      },
-      {
-        id: 's5',
-        title: 'Staff & Service',
-        description: 'Evaluate staff appearance and customer service',
-        questionCount: 7,
-        completed: false
-      }
-    ]
-  },
-  '2': {
-    id: '2',
-    storeName: 'QuickShop Express',
-    address: '456 Oak Ave, Westside',
-    dueDate: '2025-07-02',
-    priority: 'Medium',
-    status: 'Assigned',
-    storeManager: 'Michael Chen',
-    contactNumber: '+1 (555) 987-6543',
-    lastAudit: '2025-04-02',
-    lastScore: 92,
-    sections: [
-      {
-        id: 's1',
-        title: 'Store Exterior',
-        description: 'Assess the exterior appearance and signage',
-        questionCount: 8,
-        completed: false
-      },
-      {
-        id: 's2',
-        title: 'Entrance & Lobby',
-        description: 'Check entrance cleanliness and customer welcome area',
-        questionCount: 6,
-        completed: false
-      },
-      {
-        id: 's3',
-        title: 'Product Placement',
-        description: 'Verify product placement according to planogram',
-        questionCount: 15,
-        completed: false
-      },
-      {
-        id: 's4',
-        title: 'Pricing & Promotions',
-        description: 'Check price tags and promotional materials',
-        questionCount: 10,
-        completed: false
-      }
-    ]
-  },
-  // Add more audit details as needed
-};
+interface RouteParams {
+  auditId?: string;
+  assignmentId?: string;
+}
 
 export default function AuditDetailScreen() {
   const navigation = useNavigation();
   const route = useRoute();
-  const { auditId, readOnly = false } = route.params || {};
+  const { user } = useAuth();
+  const { auditId, assignmentId } = (route.params as RouteParams) || {};
   
-  const auditDetails = mockAuditDetails[auditId] || {};
-  const [expandedSection, setExpandedSection] = useState(null);
-  
-  // Calculate days remaining
-  const today = new Date();
-  const dueDate = new Date(auditDetails.dueDate);
-  const daysRemaining = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
-  
-  // Determine priority color
-  let priorityColor;
-  switch(auditDetails.priority) {
-    case 'High':
-      priorityColor = '#dc3545';
-      break;
-    case 'Medium':
-      priorityColor = '#ffc107';
-      break;
-    case 'Low':
-      priorityColor = '#28a745';
-      break;
-    default:
-      priorityColor = '#6c757d';
-  }
+  const [assignment, setAssignment] = useState<Assignment | null>(null);
+  const [template, setTemplate] = useState<TemplateDetails | null>(null);
+  const [audit, setAudit] = useState<any | null>(null);
+  const [auditTemplate, setAuditTemplate] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const toggleSection = (sectionId) => {
-    if (expandedSection === sectionId) {
-      setExpandedSection(null);
-    } else {
-      setExpandedSection(sectionId);
+  useEffect(() => {
+    loadDetails();
+  }, [assignmentId, auditId]);
+
+  const loadDetails = async () => {
+    try {
+      setLoading(true);
+      if (assignmentId != null) {
+        // Load assignment details
+        const assignmentData = await authService.getAssignmentDetails(assignmentId);
+        setAssignment(assignmentData);
+        // Load template details
+        const templateData = await authService.getTemplateDetails(assignmentData.templateId);
+        setTemplate(templateData);
+      } else if (auditId != null) {
+        // Load audit details
+        const auditData = await auditService.getAuditById(auditId);
+        setAudit(auditData);
+        // Fetch template for audit
+        if (auditData.templateId) {
+          const templateData = await authService.getTemplateDetails(auditData.templateId);
+          setAuditTemplate(templateData);
+        }
+        // If audit has assignmentId, fetch assignment details
+        if (auditData.assignmentId) {
+          const assignmentData = await authService.getAssignmentDetails(auditData.assignmentId);
+          setAssignment(assignmentData);
+          // Load template details
+          const templateData = await authService.getTemplateDetails(assignmentData.templateId);
+          setTemplate(templateData);
+        }
+      } else {
+        Alert.alert('Error', 'No assignment or audit ID provided');
+        navigation.goBack();
+      }
+    } catch (error) {
+      console.error('Failed to load details:', error);
+      Alert.alert('Error', 'Failed to load details. Please try again.');
+      navigation.goBack();
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleStartAudit = () => {
-    navigation.navigate('AuditExecution', { auditId });
+    const targetId = assignmentId || auditId;
+    (navigation as any).navigate('AuditExecution', { assignmentId: targetId });
   };
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Ionicons name="arrow-back" size={24} color="#0066CC" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Audit Details</Text>
-        {!readOnly && (
-          <TouchableOpacity style={styles.moreButton}>
-            <Ionicons name="ellipsis-vertical" size={24} color="#0066CC" />
-          </TouchableOpacity>
-        )}
-      </View>
+  const getStoreInfo = () => {
+    if (!assignment?.storeInfo) return null;
+    
+    try {
+      return JSON.parse(assignment.storeInfo);
+    } catch {
+      return { name: assignment.storeInfo };
+    }
+  };
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {/* Store Info Card */}
-        <View style={styles.storeCard}>
-          <Text style={styles.storeName}>{auditDetails.storeName}</Text>
-          
-          <View style={styles.addressContainer}>
-            <Ionicons name="location-outline" size={16} color="#6c757d" />
-            <Text style={styles.addressText}>{auditDetails.address}</Text>
-          </View>
-          
-          <View style={styles.infoRow}>
-            <View style={styles.infoItem}>
-              <Text style={styles.infoLabel}>Due Date</Text>
-              <View style={styles.infoValueContainer}>
-                <Ionicons name="calendar-outline" size={14} color="#6c757d" />
-                <Text style={[
-                  styles.infoValue, 
-                  daysRemaining <= 2 ? styles.urgentText : null
-                ]}>
-                  {daysRemaining > 0 
-                    ? `In ${daysRemaining} days` 
-                    : daysRemaining === 0 
-                      ? 'Today' 
-                      : `Overdue by ${Math.abs(daysRemaining)} days`}
-                </Text>
-              </View>
-            </View>
-            
-            <View style={styles.infoItem}>
-              <Text style={styles.infoLabel}>Priority</Text>
-              <View style={[styles.priorityBadge, { backgroundColor: priorityColor }]}>
-                <Text style={styles.priorityText}>{auditDetails.priority}</Text>
-              </View>
-            </View>
-          </View>
+  const formatDate = (dateString: string | null | undefined) => {
+    if (!dateString) return 'No due date';
+    
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    } catch {
+      return 'Invalid date';
+    }
+  };
+
+  const getDaysRemaining = () => {
+    if (!assignment?.dueDate) return null;
+    
+    const today = new Date();
+    const dueDate = new Date(assignment.dueDate);
+    const timeDiff = dueDate.getTime() - today.getTime();
+    const daysRemaining = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+    
+    return daysRemaining;
+  };
+
+  const getPriorityColor = (priority: string | null) => {
+    switch (priority) {
+      case 'High':
+        return '#dc3545';
+      case 'Medium':
+        return '#ffc107';
+      case 'Low':
+        return '#28a745';
+      default:
+        return '#6c757d';
+    }
+  };
+
+  const getStatusColor = (status: string | null) => {
+    switch (status) {
+      case 'Assigned':
+        return '#0066CC';
+      case 'In Progress':
+        return '#ffc107';
+      case 'Completed':
+        return '#28a745';
+      case 'Submitted':
+        return '#17a2b8';
+      default:
+        return '#6c757d';
+    }
+  };
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#0066CC" />
+          <Text style={styles.loadingText}>Loading assignment details...</Text>
         </View>
-        
-        {/* Contact Info Card */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Contact Information</Text>
-          
-          <View style={styles.contactItem}>
-            <Ionicons name="person-outline" size={20} color="#0066CC" />
-            <View style={styles.contactInfo}>
-              <Text style={styles.contactLabel}>Store Manager</Text>
-              <Text style={styles.contactValue}>{auditDetails.storeManager}</Text>
-            </View>
-          </View>
-          
-          <View style={styles.contactItem}>
-            <Ionicons name="call-outline" size={20} color="#0066CC" />
-            <View style={styles.contactInfo}>
-              <Text style={styles.contactLabel}>Contact Number</Text>
-              <Text style={styles.contactValue}>{auditDetails.contactNumber}</Text>
-            </View>
-          </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (assignment) {
+    const storeInfo = getStoreInfo();
+    const daysRemaining = getDaysRemaining();
+
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity 
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="arrow-back" size={24} color="#0066CC" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Assignment Details</Text>
+          <View style={styles.placeholder} />
         </View>
-        
-        {/* Previous Audit Info */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Previous Audit</Text>
-          
-          <View style={styles.previousAuditInfo}>
-            <View style={styles.previousAuditItem}>
-              <Text style={styles.previousAuditLabel}>Date</Text>
-              <Text style={styles.previousAuditValue}>{auditDetails.lastAudit}</Text>
+
+        <ScrollView style={styles.scrollView}>
+          {/* Store Information */}
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Ionicons name="storefront-outline" size={24} color="#0066CC" />
+              <Text style={styles.cardTitle}>Store Information</Text>
             </View>
-            
-            <View style={styles.previousAuditItem}>
-              <Text style={styles.previousAuditLabel}>Score</Text>
-              <View style={styles.scoreContainer}>
-                <Text style={[
-                  styles.scoreText, 
-                  { color: auditDetails.lastScore >= 90 ? '#28a745' : auditDetails.lastScore >= 70 ? '#ffc107' : '#dc3545' }
-                ]}>
-                  {auditDetails.lastScore}%
-                </Text>
-              </View>
-            </View>
-          </View>
-        </View>
-        
-        {/* Sections List */}
-        <View style={styles.sectionsCard}>
-          <Text style={styles.cardTitle}>Audit Sections</Text>
-          
-          {auditDetails.sections && auditDetails.sections.map((section) => (
-            <View key={section.id} style={styles.sectionItem}>
-              <TouchableOpacity 
-                style={styles.sectionHeader}
-                onPress={() => toggleSection(section.id)}
-              >
-                <View style={styles.sectionTitleContainer}>
-                  <Text style={styles.sectionTitle}>{section.title}</Text>
-                  <Text style={styles.questionCount}>{section.questionCount} questions</Text>
-                </View>
-                
-                <Ionicons 
-                  name={expandedSection === section.id ? "chevron-up" : "chevron-down"} 
-                  size={20} 
-                  color="#6c757d" 
-                />
-              </TouchableOpacity>
-              
-              {expandedSection === section.id && (
-                <View style={styles.sectionDetails}>
-                  <Text style={styles.sectionDescription}>{section.description}</Text>
-                  
-                  {!readOnly && (
-                    <TouchableOpacity 
-                      style={styles.startSectionButton}
-                      onPress={() => navigation.navigate('AuditExecution', { auditId, sectionId: section.id })}
-                    >
-                      <Text style={styles.startSectionButtonText}>Start Section</Text>
-                    </TouchableOpacity>
-                  )}
+            <View style={styles.cardContent}>
+              <Text style={styles.storeName}>
+                {storeInfo?.name || storeInfo?.storeName || 'Unknown Store'}
+              </Text>
+              {storeInfo?.address && (
+                <View style={styles.addressContainer}>
+                  <Ionicons name="location-outline" size={16} color="#6c757d" />
+                  <Text style={styles.addressText}>{storeInfo.address}</Text>
                 </View>
               )}
             </View>
-          ))}
-        </View>
-        
-        {/* Map Preview */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Location</Text>
-          
-          <View style={styles.mapContainer}>
-            <Image
-              source={{ uri: 'https://api.a0.dev/assets/image?text=Store%20Location%20Map&aspect=16:9' }}
-              style={styles.mapImage}
-              resizeMode="cover"
-            />
-            <View style={styles.mapOverlay}>
-              <TouchableOpacity style={styles.mapButton}>
-                <Ionicons name="navigate" size={20} color="white" />
-                <Text style={styles.mapButtonText}>Navigate</Text>
-              </TouchableOpacity>
+          </View>
+
+          {/* Template Information */}
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Ionicons name="clipboard-outline" size={24} color="#0066CC" />
+              <Text style={styles.cardTitle}>Audit Template</Text>
+            </View>
+            <View style={styles.cardContent}>
+              <Text style={styles.templateName}>{assignment?.template.name}</Text>
+              <Text style={styles.templateCategory}>{assignment?.template.category}</Text>
+              {template?.description && (
+                <Text style={styles.templateDescription}>{template.description}</Text>
+              )}
+              <View style={styles.templateStats}>
+                <View style={styles.statItem}>
+                  <Text style={styles.statValue}>
+                    {template?.questions.sections.reduce((total, section) => total + section.questions.length, 0) || 0}
+                  </Text>
+                  <Text style={styles.statLabel}>Questions</Text>
+                </View>
+                <View style={styles.statItem}>
+                  <Text style={styles.statValue}>
+                    {template?.questions.sections.reduce((total, section) => 
+                      total + section.questions.filter(q => q.required).length, 0) || 0}
+                  </Text>
+                  <Text style={styles.statLabel}>Required</Text>
+                </View>
+              </View>
             </View>
           </View>
-        </View>
-        
-        {/* Action Button */}
-        {!readOnly && (
+
+          {/* Assignment Details */}
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Ionicons name="information-circle-outline" size={24} color="#0066CC" />
+              <Text style={styles.cardTitle}>Assignment Details</Text>
+            </View>
+            <View style={styles.cardContent}>
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Status:</Text>
+                <View style={[styles.statusBadge, { backgroundColor: getStatusColor(assignment?.status) }]}>
+                  <Text style={styles.statusText}>{assignment?.status || 'Unknown'}</Text>
+                </View>
+              </View>
+              
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Priority:</Text>
+                <View style={[styles.priorityBadge, { backgroundColor: getPriorityColor(assignment?.priority) }]}>
+                  <Text style={styles.priorityText}>{assignment?.priority || 'Medium'}</Text>
+                </View>
+              </View>
+              
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Due Date:</Text>
+                <Text style={styles.detailValue}>{formatDate(assignment?.dueDate || null)}</Text>
+              </View>
+              
+              {daysRemaining !== null && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Time Remaining:</Text>
+                  <Text style={[
+                    styles.detailValue,
+                    daysRemaining < 0 ? styles.overdue : daysRemaining <= 2 ? styles.urgent : null
+                  ]}>
+                    {daysRemaining > 0 
+                      ? `${daysRemaining} days remaining`
+                      : daysRemaining === 0 
+                        ? 'Due today'
+                        : `Overdue by ${Math.abs(daysRemaining)} days`
+                    }
+                  </Text>
+                </View>
+              )}
+              
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Assigned By:</Text>
+                <Text style={styles.detailValue}>
+                  {assignment?.assignedBy.firstName} {assignment?.assignedBy.lastName}
+                </Text>
+              </View>
+              
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Created:</Text>
+                <Text style={styles.detailValue}>{formatDate(assignment?.createdAt || null)}</Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Notes */}
+          {assignment?.notes && (
+            <View style={styles.card}>
+              <View style={styles.cardHeader}>
+                <Ionicons name="document-text-outline" size={24} color="#0066CC" />
+                <Text style={styles.cardTitle}>Notes</Text>
+              </View>
+              <View style={styles.cardContent}>
+                <Text style={styles.notesText}>{assignment.notes}</Text>
+              </View>
+            </View>
+          )}
+
+          {/* Start Audit Button */}
           <TouchableOpacity 
-            style={styles.startButton}
+            style={[
+              styles.startAuditButton,
+              assignment?.status === 'Completed' && styles.disabledButton
+            ]}
             onPress={handleStartAudit}
+            disabled={assignment?.status === 'Completed'}
           >
-            <Text style={styles.startButtonText}>Start Audit</Text>
+            <Ionicons 
+              name={assignment?.status === 'Completed' ? "checkmark-circle" : "play-circle"} 
+              size={24} 
+              color="white" 
+            />
+            <Text style={styles.startAuditButtonText}>
+              {assignment?.status === 'Completed' ? 'Audit Completed' : 'Start Audit'}
+            </Text>
           </TouchableOpacity>
-        )}
-        
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>Last updated: Today, 9:30 AM</Text>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  if (audit) {
+    // Build questionId to questionText map
+    let questionMap: Record<string, string> = {};
+    if (auditTemplate && auditTemplate.questions && auditTemplate.questions.sections) {
+      auditTemplate.questions.sections.forEach((section: any) => {
+        section.questions.forEach((q: any) => {
+          questionMap[q.id] = q.text || q.label || q.title || q.id;
+        });
+      });
+    }
+    const storeInfo = audit.storeInfo || {};
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity 
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="arrow-back" size={24} color="#0066CC" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Audit Details</Text>
+          <View style={styles.placeholder} />
         </View>
-      </ScrollView>
+        <ScrollView style={styles.scrollView}>
+          {/* Store Information */}
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Ionicons name="storefront-outline" size={24} color="#0066CC" />
+              <Text style={styles.cardTitle}>Store Information</Text>
+            </View>
+            <View style={styles.cardContent}>
+              <Text style={styles.storeName}>
+                {storeInfo.name || storeInfo.storeName || 'Unknown Store'}
+              </Text>
+              {(storeInfo.address || storeInfo.storeAddress) && (
+                <View style={styles.addressContainer}>
+                  <Ionicons name="location-outline" size={16} color="#6c757d" />
+                  <Text style={styles.addressText}>{storeInfo.address || storeInfo.storeAddress}</Text>
+                </View>
+              )}
+            </View>
+          </View>
+          {/* Audit Responses */}
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Ionicons name="document-text-outline" size={24} color="#0066CC" />
+              <Text style={styles.cardTitle}>Responses</Text>
+            </View>
+            <View style={styles.cardContent}>
+              {audit.responses ? (
+                Object.entries(audit.responses).map(([questionId, response]: any) => (
+                  <View key={questionId} style={{ marginBottom: 12 }}>
+                    <Text style={{ fontWeight: 'bold' }}>Q: {questionMap[questionId] || questionId}</Text>
+                    <Text>A: {typeof response.answer === 'string' || Array.isArray(response.answer) ? JSON.stringify(response.answer) : String(response.answer)}</Text>
+                  </View>
+                ))
+              ) : (
+                <Text>No responses found.</Text>
+              )}
+            </View>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.loadingContainer}>
+        <Text style={styles.loadingText}>No details found for this audit.</Text>
+      </View>
     </SafeAreaView>
   );
 }
@@ -322,10 +396,20 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f7fa',
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#6c757d',
+  },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
     backgroundColor: 'white',
@@ -340,66 +424,125 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#212529',
   },
-  moreButton: {
-    padding: 4,
+  placeholder: {
+    width: 32,
   },
   scrollView: {
     flex: 1,
+    padding: 16,
   },
-  storeCard: {
+  card: {
     backgroundColor: 'white',
     borderRadius: 12,
-    margin: 16,
-    padding: 16,
+    marginBottom: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 2,
   },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+  },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#212529',
+    marginLeft: 8,
+  },
+  cardContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+  },
   storeName: {
     fontSize: 20,
-    fontWeight: 'bold',
+    fontWeight: '600',
     color: '#212529',
     marginBottom: 8,
   },
   addressContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
   },
   addressText: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#6c757d',
     marginLeft: 4,
   },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  infoItem: {
-    flex: 1,
-  },
-  infoLabel: {
-    fontSize: 12,
-    color: '#6c757d',
+  templateName: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#212529',
     marginBottom: 4,
   },
-  infoValueContainer: {
+  templateCategory: {
+    fontSize: 14,
+    color: '#0066CC',
+    marginBottom: 8,
+  },
+  templateDescription: {
+    fontSize: 14,
+    color: '#6c757d',
+    marginBottom: 16,
+  },
+  templateStats: {
     flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  statItem: {
     alignItems: 'center',
   },
-  infoValue: {
+  statValue: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#0066CC',
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#6c757d',
+    marginTop: 4,
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  detailLabel: {
     fontSize: 14,
     fontWeight: '500',
     color: '#212529',
-    marginLeft: 4,
+    flex: 1,
   },
-  urgentText: {
+  detailValue: {
+    fontSize: 14,
+    color: '#6c757d',
+    flex: 2,
+    textAlign: 'right',
+  },
+  overdue: {
     color: '#dc3545',
+    fontWeight: '600',
+  },
+  urgent: {
+    color: '#ffc107',
+    fontWeight: '600',
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  statusText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '500',
   },
   priorityBadge: {
-    alignSelf: 'flex-start',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,
@@ -409,174 +552,28 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
-  card: {
-    backgroundColor: 'white',
-    borderRadius: 12,
-    marginHorizontal: 16,
-    marginBottom: 16,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#212529',
-    marginBottom: 16,
-  },
-  contactItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  contactInfo: {
-    marginLeft: 12,
-  },
-  contactLabel: {
-    fontSize: 12,
-    color: '#6c757d',
-  },
-  contactValue: {
+  notesText: {
     fontSize: 14,
-    fontWeight: '500',
     color: '#212529',
+    lineHeight: 20,
   },
-  previousAuditInfo: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  previousAuditItem: {
-    flex: 1,
-  },
-  previousAuditLabel: {
-    fontSize: 12,
-    color: '#6c757d',
-    marginBottom: 4,
-  },
-  previousAuditValue: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#212529',
-  },
-  scoreContainer: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#f8f9fa',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 16,
-  },
-  scoreText: {
-    fontSize: 14,
-    fontWeight: 'bold',
-  },
-  sectionsCard: {
-    backgroundColor: 'white',
-    borderRadius: 12,
-    marginHorizontal: 16,
-    marginBottom: 16,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  sectionItem: {
-    borderBottomWidth: 1,
-    borderBottomColor: '#e9ecef',
-    paddingVertical: 12,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  sectionTitleContainer: {
-    flex: 1,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#212529',
-  },
-  questionCount: {
-    fontSize: 12,
-    color: '#6c757d',
-    marginTop: 2,
-  },
-  sectionDetails: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#e9ecef',
-  },
-  sectionDescription: {
-    fontSize: 14,
-    color: '#6c757d',
-    marginBottom: 12,
-  },
-  startSectionButton: {
-    backgroundColor: '#e9ecef',
-    borderRadius: 8,
-    paddingVertical: 8,
-    alignItems: 'center',
-  },
-  startSectionButtonText: {
-    color: '#212529',
-    fontWeight: '500',
-    fontSize: 14,
-  },
-  mapContainer: {
-    position: 'relative',
-    height: 180,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  mapImage: {
-    width: '100%',
-    height: '100%',
-  },
-  mapOverlay: {
-    position: 'absolute',
-    bottom: 12,
-    right: 12,
-  },
-  mapButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  startAuditButton: {
     backgroundColor: '#0066CC',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  mapButtonText: {
-    color: 'white',
-    fontWeight: '500',
-    fontSize: 14,
-    marginLeft: 4,
-  },
-  startButton: {
-    backgroundColor: '#0066CC',
-    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 16,
-    alignItems: 'center',
-    marginHorizontal: 16,
-    marginBottom: 16,
+    borderRadius: 12,
+    marginTop: 8,
+    marginBottom: 32,
   },
-  startButtonText: {
+  disabledButton: {
+    backgroundColor: '#6c757d',
+  },
+  startAuditButtonText: {
     color: 'white',
+    fontSize: 18,
     fontWeight: '600',
-    fontSize: 16,
-  },
-  footer: {
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  footerText: {
-    fontSize: 12,
-    color: '#6c757d',
+    marginLeft: 8,
   },
 });

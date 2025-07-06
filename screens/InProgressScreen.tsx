@@ -1,52 +1,134 @@
-import React from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { useAuth } from '../contexts/AuthContext';
+import { authService, Assignment } from '../services/AuthService';
+import { auditService, AuditSummaryDto } from '../services/AuditService';
 
-// Mock data for in-progress audits
-const inProgressAudits = [
-  {
-    id: '3',
-    storeName: 'Value Grocery',
-    address: '789 Pine Rd, Eastside',
-    lastUpdated: '2025-06-25T14:30:00',
-    completionPercentage: 45,
-    sections: {
-      total: 5,
-      completed: 2
-    }
-  },
-  {
-    id: '5',
-    storeName: 'Fresh Market',
-    address: '202 Cedar Ln, Southside',
-    lastUpdated: '2025-06-26T09:15:00',
-    completionPercentage: 75,
-    sections: {
-      total: 4,
-      completed: 3
-    }
-  },
-  {
-    id: '7',
-    storeName: 'Corner Mart',
-    address: '505 Maple Dr, Westside',
-    lastUpdated: '2025-06-24T16:45:00',
-    completionPercentage: 20,
-    sections: {
-      total: 5,
-      completed: 1
-    }
-  }
-];
+interface InProgressItem {
+  id: string;
+  assignmentId: string;
+  storeName: string;
+  address: string;
+  lastUpdated: string;
+  completionPercentage: number;
+  sections: {
+    total: number;
+    completed: number;
+  };
+  templateName: string;
+  dueDate: string;
+}
 
 export default function InProgressScreen() {
   const navigation = useNavigation();
+  const { user } = useAuth();
+  const [inProgressItems, setInProgressItems] = useState<InProgressItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const formatLastUpdated = (dateString) => {
+  useEffect(() => {
+    loadInProgressData();
+  }, []);
+
+  const loadInProgressData = async () => {
+    try {
+      if (!user?.userId) {
+        Alert.alert('Error', 'User not found. Please log in again.');
+        return;
+      }
+
+      setLoading(true);
+      
+      // Load assignments and audits
+      const [assignments, audits] = await Promise.all([
+        authService.getAssignmentsForUser(user.userId),
+        auditService.getAllAudits()
+      ]);
+
+      // Find assignments that have in-progress audits (not submitted)
+      const inProgressAssignments = assignments.filter(assignment => {
+        const hasInProgressAudit = audits.some(audit => 
+          audit.status !== 'Submitted'
+        );
+        return hasInProgressAudit;
+      });
+
+      // Convert to InProgressItem format
+      const inProgressData: InProgressItem[] = inProgressAssignments.map(assignment => {
+        // Find the associated audit (use the first non-submitted audit)
+        const audit = audits.find(a => a.status !== 'Submitted');
+        
+        // Parse store info
+        let storeName = 'Unknown Store';
+        let address = 'Address not available';
+        
+        if (assignment.storeInfo) {
+          try {
+            const storeData = JSON.parse(assignment.storeInfo);
+            storeName = storeData.name || storeData.storeName || 'Unknown Store';
+            address = storeData.address || 'Address not available';
+          } catch {
+            storeName = assignment.storeInfo;
+          }
+        }
+
+        // Calculate completion percentage based on audit status
+        let completionPercentage = 0;
+        let completedSections = 0;
+        let totalSections = 5; // Default section count
+
+        if (audit) {
+          // Simplified calculation based on audit status
+          if (audit.status === 'In Progress') {
+            completionPercentage = 50; // Assume 50% complete for in-progress audits
+            completedSections = 2;
+          } else if (audit.status === 'Assigned') {
+            completionPercentage = 0;
+            completedSections = 0;
+          } else {
+            completionPercentage = 75; // Assume 75% for other non-submitted statuses
+            completedSections = 4;
+          }
+        }
+
+        return {
+          id: audit?.auditId || assignment.assignmentId,
+          assignmentId: assignment.assignmentId,
+          storeName,
+          address,
+          lastUpdated: audit?.createdAt || assignment.createdAt,
+          completionPercentage,
+          sections: {
+            total: totalSections,
+            completed: completedSections
+          },
+          templateName: assignment.template.name || 'Unknown Template',
+          dueDate: assignment.dueDate || new Date().toISOString()
+        };
+      });
+
+      setInProgressItems(inProgressData);
+      
+    } catch (error) {
+      console.error('Failed to load in-progress data:', error);
+      Alert.alert('Error', 'Failed to load in-progress audits. Please try again.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadInProgressData();
+  };
+
+  const formatLastUpdated = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
-    const diffMs = now - date;
+    const diffMs = now.getTime() - date.getTime();
     const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
     
     if (diffHrs < 1) {
@@ -60,14 +142,20 @@ export default function InProgressScreen() {
     }
   };
 
-  const renderAuditItem = ({ item }) => {
+  const renderAuditItem = ({ item }: { item: InProgressItem }) => {
     return (
       <TouchableOpacity 
         style={styles.auditCard}
-        onPress={() => navigation.navigate('AuditExecution', { auditId: item.id })}
+        onPress={() => (navigation as any).navigate('AuditExecution', { 
+          assignmentId: item.assignmentId,
+          auditId: item.id 
+        })}
       >
         <View style={styles.cardHeader}>
-          <Text style={styles.storeName}>{item.storeName}</Text>
+          <View style={styles.storeInfo}>
+            <Text style={styles.storeName}>{item.storeName}</Text>
+            <Text style={styles.templateName}>{item.templateName}</Text>
+          </View>
           <View style={styles.lastUpdatedContainer}>
             <Ionicons name="time-outline" size={14} color="#6c757d" />
             <Text style={styles.lastUpdatedText}>
@@ -104,7 +192,10 @@ export default function InProgressScreen() {
         <View style={styles.buttonContainer}>
           <TouchableOpacity 
             style={styles.continueButton}
-            onPress={() => navigation.navigate('AuditExecution', { auditId: item.id })}
+            onPress={() => (navigation as any).navigate('AuditExecution', { 
+              assignmentId: item.assignmentId,
+              auditId: item.id 
+            })}
           >
             <Text style={styles.continueButtonText}>Continue</Text>
           </TouchableOpacity>
@@ -112,7 +203,10 @@ export default function InProgressScreen() {
           {item.completionPercentage === 100 && (
             <TouchableOpacity 
               style={styles.submitButton}
-              onPress={() => navigation.navigate('AuditSubmit', { auditId: item.id })}
+              onPress={() => (navigation as any).navigate('AuditSubmit', { 
+                assignmentId: item.assignmentId,
+                auditId: item.id 
+              })}
             >
               <Text style={styles.submitButtonText}>Submit</Text>
             </TouchableOpacity>
@@ -122,29 +216,40 @@ export default function InProgressScreen() {
     );
   };
 
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#0066CC" />
+        <Text style={styles.loadingText}>Loading in-progress audits...</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>In Progress</Text>
-        <TouchableOpacity style={styles.syncButton}>
+        <TouchableOpacity style={styles.syncButton} onPress={handleRefresh}>
           <Ionicons name="sync-outline" size={24} color="#0066CC" />
         </TouchableOpacity>
       </View>
       
-      {inProgressAudits.length > 0 ? (
+      {inProgressItems.length > 0 ? (
         <FlatList
-          data={inProgressAudits}
+          data={inProgressItems}
           renderItem={renderAuditItem}
           keyExtractor={item => item.id}
           contentContainerStyle={styles.listContainer}
           showsVerticalScrollIndicator={false}
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
         />
       ) : (
         <View style={styles.emptyContainer}>
           <Ionicons name="clipboard-outline" size={64} color="#6c757d" />
           <Text style={styles.emptyText}>No audits in progress</Text>
           <Text style={styles.emptySubtext}>
-            Start a new audit from the Audits tab
+            Start a new audit from the Assignments tab
           </Text>
         </View>
       )}
@@ -193,11 +298,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
+  storeInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
   storeName: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#212529',
     flex: 1,
+  },
+  templateName: {
+    fontSize: 14,
+    color: '#6c757d',
+    marginTop: 2,
   },
   lastUpdatedContainer: {
     flexDirection: 'row',
@@ -292,5 +406,16 @@ const styles = StyleSheet.create({
     color: '#6c757d',
     marginTop: 8,
     textAlign: 'center',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#212529',
+    marginTop: 16,
   },
 });

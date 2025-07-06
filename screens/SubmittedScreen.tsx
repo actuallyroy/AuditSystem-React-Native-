@@ -1,60 +1,141 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { useAuth } from '../contexts/AuthContext';
+import { auditService, AuditSummaryDto } from '../services/AuditService';
 
-// Mock data for submitted audits
-const submittedAudits = [
-  {
-    id: '101',
-    storeName: 'SuperMart Downtown',
-    address: '123 Main St, Downtown',
-    submittedDate: '2025-06-20T10:15:00',
-    status: 'Approved',
-    score: 92,
-  },
-  {
-    id: '102',
-    storeName: 'QuickShop Express',
-    address: '456 Oak Ave, Westside',
-    submittedDate: '2025-06-22T14:30:00',
-    status: 'Pending',
-    score: 85,
-  },
-  {
-    id: '103',
-    storeName: 'Value Grocery',
-    address: '789 Pine Rd, Eastside',
-    submittedDate: '2025-06-15T09:45:00',
-    status: 'Rejected',
-    score: 65,
-    rejectionReason: 'Incomplete product placement section'
-  },
-  {
-    id: '104',
-    storeName: 'Metro Superstore',
-    address: '101 Elm Blvd, Northside',
-    submittedDate: '2025-06-18T16:20:00',
-    status: 'Approved',
-    score: 88,
-  },
-];
+interface SubmittedItem {
+  id: string;
+  storeName: string;
+  address: string;
+  submittedDate: string;
+  status: string;
+  score: number | string;
+  templateName: string;
+  rejectionReason?: string;
+}
+
+interface FilterButtonProps {
+  title: string;
+  isActive: boolean;
+  onPress: () => void;
+}
 
 export default function SubmittedScreen() {
   const navigation = useNavigation();
+  const { user } = useAuth();
+  const [submittedItems, setSubmittedItems] = useState<SubmittedItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
 
+  useEffect(() => {
+    loadSubmittedData();
+  }, []);
+
+  const loadSubmittedData = async () => {
+    try {
+      if (!user?.userId) {
+        Alert.alert('Error', 'User not found. Please log in again.');
+        return;
+      }
+
+      setLoading(true);
+      
+      // Load all audits and filter for submitted ones
+      const allAudits = await auditService.getAllAudits();
+      
+      // Debug: Log all audit statuses to see what we're getting
+      console.log('All audits:', allAudits.map(a => ({ id: a.auditId, status: a.status, templateName: a.templateName })));
+      
+      // Filter for submitted audits - try broader filter first
+      const submittedAudits = allAudits.filter(audit => {
+        // Log each audit status for debugging
+        console.log(`Audit ${audit.auditId}: status = "${audit.status}"`);
+        
+        // Check for various possible submitted statuses
+        return audit.status === 'Submitted' || 
+               audit.status === 'Approved' || 
+               audit.status === 'Rejected' ||
+               audit.status === 'submitted' ||
+               audit.status === 'approved' ||
+               audit.status === 'rejected' ||
+               audit.status === 'COMPLETED' ||
+               audit.status === 'completed';
+      });
+      
+      console.log('Filtered submitted audits:', submittedAudits.length);
+      console.log('Submitted audit statuses:', submittedAudits.map(a => a.status));
+
+      // If no submitted audits found, show all audits for debugging
+      const auditsToProcess = submittedAudits.length > 0 ? submittedAudits : allAudits;
+      console.log('Processing audits:', auditsToProcess.length);
+
+      // Convert to SubmittedItem format
+      const submittedData: SubmittedItem[] = auditsToProcess.map(audit => {
+        // Use storeName and address from API, fallback if missing
+        const templateName = audit.templateName && audit.templateName.trim() !== '' ? audit.templateName : 'No Template Name';
+        const storeName = audit.storeName && audit.storeName.trim() !== '' ? audit.storeName : 'No Store Info';
+        const address = audit.address && audit.address.trim() !== '' ? audit.address : 'No Address';
+
+        // Determine status for display
+        let displayStatus = audit.status || 'Unknown';
+        if (audit.status && audit.status.toLowerCase() === 'submitted') {
+          displayStatus = 'Pending';
+        } else if (audit.status && audit.status.toLowerCase() === 'approved') {
+          displayStatus = 'Approved';
+        } else if (audit.status && audit.status.toLowerCase() === 'rejected') {
+          displayStatus = 'Rejected';
+        } else if (audit.status && audit.status.toLowerCase() === 'completed') {
+          displayStatus = 'Completed';
+        }
+
+        // Score: show N/A if 0 or missing
+        let score: number | string = (audit.score === null || audit.score === undefined) ? 'N/A' : audit.score;
+        if (score === 0) {
+          score = 'N/A';
+        }
+
+        return {
+          id: audit.auditId,
+          storeName,
+          address,
+          submittedDate: audit.endTime || audit.createdAt,
+          status: displayStatus,
+          score,
+          templateName,
+          rejectionReason: displayStatus === 'Rejected' ? 'Audit did not meet requirements' : undefined
+        };
+      });
+
+      setSubmittedItems(submittedData);
+      
+    } catch (error) {
+      console.error('Failed to load submitted data:', error);
+      Alert.alert('Error', 'Failed to load submitted audits. Please try again.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadSubmittedData();
+  };
+
   // Filter audits based on search query and filters
-  const filteredAudits = submittedAudits.filter(audit => {
+  const filteredAudits = submittedItems.filter(audit => {
     const matchesSearch = audit.storeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          audit.address.toLowerCase().includes(searchQuery.toLowerCase());
+    // Status filter: handle 'Pending' for both 'Submitted' and 'submitted'
     const matchesStatus = statusFilter === 'All' || audit.status === statusFilter;
-    
     return matchesSearch && matchesStatus;
   });
 
-  const formatSubmittedDate = (dateString) => {
+  const formatSubmittedDate = (dateString: string) => {
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', { 
       month: 'short', 
@@ -63,10 +144,10 @@ export default function SubmittedScreen() {
     });
   };
 
-  const renderAuditItem = ({ item }) => {
+  const renderAuditItem = ({ item }: { item: SubmittedItem }) => {
     // Determine status color
-    let statusColor;
-    let statusIcon;
+    let statusColor: string;
+    let statusIcon: string;
     
     switch(item.status) {
       case 'Approved':
@@ -81,30 +162,42 @@ export default function SubmittedScreen() {
         statusColor = '#dc3545';
         statusIcon = 'close-circle';
         break;
+      case 'Completed':
+        statusColor = '#17a2b8';
+        statusIcon = 'checkmark-done-circle';
+        break;
       default:
         statusColor = '#6c757d';
         statusIcon = 'help-circle';
     }
 
     // Determine score color
-    let scoreColor;
-    if (item.score >= 90) {
+    let scoreColor: string;
+    if (typeof item.score === 'number' && item.score >= 90) {
       scoreColor = '#28a745';
-    } else if (item.score >= 70) {
+    } else if (typeof item.score === 'number' && item.score >= 70) {
       scoreColor = '#ffc107';
-    } else {
+    } else if (typeof item.score === 'number') {
       scoreColor = '#dc3545';
+    } else {
+      scoreColor = '#6c757d';
     }
 
     return (
       <TouchableOpacity 
         style={styles.auditCard}
-        onPress={() => navigation.navigate('AuditDetail', { auditId: item.id, readOnly: true })}
+        onPress={() => (navigation as any).navigate('AuditDetail', { 
+          auditId: item.id, 
+          readOnly: true 
+        })}
       >
         <View style={styles.cardHeader}>
-          <Text style={styles.storeName}>{item.storeName}</Text>
+          <View style={styles.storeInfo}>
+            <Text style={styles.storeName}>{item.storeName}</Text>
+            <Text style={styles.templateName}>{item.templateName}</Text>
+          </View>
           <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
-            <Ionicons name={statusIcon} size={12} color="white" style={styles.statusIcon} />
+            <Ionicons name={statusIcon as any} size={12} color="white" style={styles.statusIcon} />
             <Text style={styles.statusText}>{item.status}</Text>
           </View>
         </View>
@@ -123,8 +216,9 @@ export default function SubmittedScreen() {
           </View>
           
           <View style={styles.scoreContainer}>
-            <Text style={[styles.scoreText, { color: scoreColor }]}>
-              {item.score}%
+            <Text style={[styles.scoreText, { color: scoreColor }]}> 
+              {item.score}
+              {typeof item.score === 'string' ? '' : '%'}
             </Text>
           </View>
         </View>
@@ -138,7 +232,10 @@ export default function SubmittedScreen() {
         
         <TouchableOpacity 
           style={styles.viewButton}
-          onPress={() => navigation.navigate('AuditDetail', { auditId: item.id, readOnly: true })}
+          onPress={() => (navigation as any).navigate('AuditDetail', { 
+            auditId: item.id, 
+            readOnly: true 
+          })}
         >
           <Text style={styles.viewButtonText}>View Details</Text>
         </TouchableOpacity>
@@ -146,10 +243,22 @@ export default function SubmittedScreen() {
     );
   };
 
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#0066CC" />
+        <Text style={styles.loadingText}>Loading submitted audits...</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Submitted</Text>
+        <TouchableOpacity style={styles.syncButton} onPress={handleRefresh}>
+          <Ionicons name="sync-outline" size={24} color="#0066CC" />
+        </TouchableOpacity>
       </View>
       
       <View style={styles.searchContainer}>
@@ -184,6 +293,11 @@ export default function SubmittedScreen() {
             isActive={statusFilter === 'Rejected'} 
             onPress={() => setStatusFilter('Rejected')} 
           />
+          <FilterButton 
+            title="Completed" 
+            isActive={statusFilter === 'Completed'} 
+            onPress={() => setStatusFilter('Completed')} 
+          />
         </ScrollView>
       </View>
       
@@ -194,6 +308,8 @@ export default function SubmittedScreen() {
           keyExtractor={item => item.id}
           contentContainerStyle={styles.listContainer}
           showsVerticalScrollIndicator={false}
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
         />
       ) : (
         <View style={styles.emptyContainer}>
@@ -209,7 +325,7 @@ export default function SubmittedScreen() {
 }
 
 // Filter button component
-const FilterButton = ({ title, isActive, onPress }) => (
+const FilterButton: React.FC<FilterButtonProps> = ({ title, isActive, onPress }) => (
   <TouchableOpacity 
     style={[styles.filterButton, isActive && styles.activeFilterButton]} 
     onPress={onPress}
@@ -305,11 +421,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
+  storeInfo: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+  },
   storeName: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#212529',
     flex: 1,
+  },
+  templateName: {
+    fontSize: 14,
+    color: '#6c757d',
+    marginTop: 2,
   },
   statusBadge: {
     flexDirection: 'row',
@@ -405,5 +530,26 @@ const styles = StyleSheet.create({
     color: '#6c757d',
     marginTop: 8,
     textAlign: 'center',
+  },
+  syncButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: 'white',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 1,
+    elevation: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#212529',
+    marginTop: 16,
   },
 });

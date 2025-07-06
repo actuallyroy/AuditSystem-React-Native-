@@ -1,79 +1,210 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, ScrollView } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { useAuth } from '../contexts/AuthContext';
+import { authService, Assignment } from '../services/AuthService';
+import { auditService, AuditSummaryDto } from '../services/AuditService';
 
-// Mock data for audits
-const mockAudits = [
-  {
-    id: '1',
-    storeName: 'SuperMart Downtown',
-    address: '123 Main St, Downtown',
-    dueDate: '2025-06-30',
-    priority: 'High',
-    status: 'Assigned',
-  },
-  {
-    id: '2',
-    storeName: 'QuickShop Express',
-    address: '456 Oak Ave, Westside',
-    dueDate: '2025-07-02',
-    priority: 'Medium',
-    status: 'Assigned',
-  },
-  {
-    id: '3',
-    storeName: 'Value Grocery',
-    address: '789 Pine Rd, Eastside',
-    dueDate: '2025-07-05',
-    priority: 'Low',
-    status: 'In Progress',
-  },
-  {
-    id: '4',
-    storeName: 'Metro Superstore',
-    address: '101 Elm Blvd, Northside',
-    dueDate: '2025-06-28',
-    priority: 'High',
-    status: 'Assigned',
-  },
-  {
-    id: '5',
-    storeName: 'Fresh Market',
-    address: '202 Cedar Ln, Southside',
-    dueDate: '2025-07-10',
-    priority: 'Medium',
-    status: 'In Progress',
-  },
-];
+// Define navigation types
+type RootStackParamList = {
+  AuditDetail: { auditId: string };
+  AuditExecution: { auditId: string };
+};
+
+interface AuditItem {
+  id: string;
+  storeName: string;
+  address: string;
+  dueDate: string;
+  priority: string;
+  status: string;
+  assignmentId: string;
+  templateName: string;
+  templateCategory: string;
+  notes?: string;
+  isInProgress?: boolean;
+}
+
+interface FilterButtonProps {
+  title: string;
+  isActive: boolean;
+  onPress: () => void;
+}
+
+interface RenderItemProps {
+  item: AuditItem;
+}
 
 export default function AuditListScreen() {
   const navigation = useNavigation();
+  const { user } = useAuth();
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [audits, setAudits] = useState<AuditSummaryDto[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('All');
   const [priorityFilter, setPriorityFilter] = useState('All');
+  const [dueFilter, setDueFilter] = useState('All');
 
-  // Filter audits based on search query and filters
-  const filteredAudits = mockAudits.filter(audit => {
-    const matchesSearch = audit.storeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         audit.address.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === 'All' || audit.status === statusFilter;
-    const matchesPriority = priorityFilter === 'All' || audit.priority === priorityFilter;
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const loadData = async () => {
+    try {
+      if (!user?.userId) {
+        Alert.alert('Error', 'User not found. Please log in again.');
+        return;
+      }
+
+      console.log('Loading assignments for user:', user.userId);
+      console.log('User details:', { 
+        username: user.username, 
+        role: user.role, 
+        firstName: user.firstName 
+      });
+
+      const fetchedAssignments = await authService.getAssignmentsForUser(user.userId);
+      setAssignments(fetchedAssignments);
+      console.log('Successfully loaded assignments:', fetchedAssignments.length);
+
+      // Also load audits for the user to check progress
+      const fetchedAudits = await auditService.getAllAudits();
+      setAudits(fetchedAudits);
+      console.log('Successfully loaded audits:', fetchedAudits.length);
+      
+    } catch (error) {
+      console.error('Failed to load assignments:', error);
+      
+      if (error instanceof Error) {
+        if (error.message.includes('403')) {
+          Alert.alert(
+            'Access Denied', 
+            'You do not have permission to view assignments. Please check with your administrator or try logging in again.',
+            [
+              { text: 'OK', style: 'default' },
+              { 
+                text: 'Debug Info', 
+                onPress: () => {
+                  console.log('Current user:', user);
+                  Alert.alert('Debug Info', `User ID: ${user?.userId}\nRole: ${user?.role}\nUsername: ${user?.username}`);
+                }
+              }
+            ]
+          );
+        } else if (error.message.includes('session has expired')) {
+          // Token expiration is now handled automatically by AuthService
+          Alert.alert(
+            'Session Expired', 
+            'Your session has expired. You will be redirected to the login screen.',
+            [
+              { text: 'OK', style: 'default' }
+            ]
+          );
+        } else {
+          Alert.alert('Error', `Failed to load assignments: ${error.message}`);
+        }
+      } else {
+        Alert.alert('Error', 'An unknown error occurred while loading assignments.');
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadData();
+  };
+
+  // Convert Assignment to AuditItem for UI compatibility
+  const convertAssignmentToAuditItem = (assignment: Assignment): AuditItem => {
+    // Parse store info if it exists
+    let storeName = 'Unknown Store';
+    let address = 'Address not available';
     
-    return matchesSearch && matchesStatus && matchesPriority;
-  });
+    if (assignment.storeInfo) {
+      try {
+        const storeData = JSON.parse(assignment.storeInfo);
+        storeName = storeData.name || storeData.storeName || 'Unknown Store';
+        address = storeData.address || 'Address not available';
+      } catch {
+        // If parsing fails, use storeInfo as store name
+        storeName = assignment.storeInfo;
+      }
+    }
 
-  const renderAuditItem = ({ item }) => {
+    // Check if this assignment has any progress (in-progress audits)
+    const hasProgress = audits.some(audit => 
+      audit.assignmentId === assignment.assignmentId && 
+      audit.status !== 'Submitted'
+    );
+
+    return {
+      id: assignment.assignmentId,
+      assignmentId: assignment.assignmentId,
+      storeName,
+      address,
+      dueDate: assignment.dueDate || new Date().toISOString(),
+      priority: assignment.priority || 'Medium',
+      status: hasProgress ? 'In Progress' : assignment.status || 'Assigned',
+      templateName: assignment.template.name || 'Unknown Template',
+      templateCategory: assignment.template.category || 'General',
+      notes: assignment.notes || undefined,
+      isInProgress: hasProgress,
+    };
+  };
+
+  // Filter items based on search query and filters
+  const filteredAudits = assignments
+    .map(convertAssignmentToAuditItem)
+    .filter(audit => {
+      // Exclude completed assignments
+      if (audit.status === 'Completed') return false;
+      const matchesSearch = audit.storeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           audit.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           audit.templateName.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesPriority = priorityFilter === 'All' || audit.priority === priorityFilter;
+      // Due date filtering
+      const today = new Date();
+      const dueDate = new Date(audit.dueDate);
+      const timeDiff = dueDate.getTime() - today.getTime();
+      const daysRemaining = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+      let matchesDue = true;
+      switch (dueFilter) {
+        case 'Overdue':
+          matchesDue = daysRemaining < 0;
+          break;
+        case 'Due Today':
+          matchesDue = daysRemaining === 0;
+          break;
+        case 'Due This Week':
+          matchesDue = daysRemaining >= 0 && daysRemaining <= 7;
+          break;
+        case 'Due Next Week':
+          matchesDue = daysRemaining > 7 && daysRemaining <= 14;
+          break;
+        default:
+          matchesDue = true;
+      }
+      return matchesSearch && matchesPriority && matchesDue;
+    });
+
+  const renderAuditItem = ({ item }: RenderItemProps) => {
+    
     // Calculate days remaining
     const today = new Date();
     const dueDate = new Date(item.dueDate);
-    const daysRemaining = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
+    const timeDiff = dueDate.getTime() - today.getTime();
+    const daysRemaining = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
     
     // Determine status color
-    const statusColor = item.status === 'Assigned' ? '#0066CC' : '#ffc107';
+    const statusColor = item.isInProgress ? '#ffc107' : '#0066CC';
     
     // Determine priority color
-    let priorityColor;
+    let priorityColor: string;
     switch(item.priority) {
       case 'High':
         priorityColor = '#dc3545';
@@ -91,10 +222,16 @@ export default function AuditListScreen() {
     return (
       <TouchableOpacity 
         style={styles.auditCard}
-        onPress={() => navigation.navigate('AuditDetail', { auditId: item.id })}
+        onPress={() => (navigation as any).navigate('AuditDetail', { 
+          auditId: item.id,
+          assignmentId: item.assignmentId
+        })}
       >
         <View style={styles.cardHeader}>
-          <Text style={styles.storeName}>{item.storeName}</Text>
+          <View style={styles.storeNameContainer}>
+            <Text style={styles.storeName}>{item.storeName}</Text>
+            <Text style={styles.templateName}>{item.templateName}</Text>
+          </View>
           <View style={[styles.statusBadge, { backgroundColor: statusColor }]}>
             <Text style={styles.statusText}>{item.status}</Text>
           </View>
@@ -104,6 +241,13 @@ export default function AuditListScreen() {
           <Ionicons name="location-outline" size={16} color="#6c757d" />
           <Text style={styles.addressText}>{item.address}</Text>
         </View>
+        
+        {item.notes && (
+          <View style={styles.notesContainer}>
+            <Ionicons name="document-text-outline" size={16} color="#6c757d" />
+            <Text style={styles.notesText}>{item.notes}</Text>
+          </View>
+        )}
         
         <View style={styles.cardFooter}>
           <View style={styles.footerItem}>
@@ -124,19 +268,32 @@ export default function AuditListScreen() {
         
         <TouchableOpacity 
           style={styles.startButton}
-          onPress={() => navigation.navigate('AuditExecution', { auditId: item.id })}
+          onPress={() => {
+            (navigation as any).navigate('AuditExecution', { assignmentId: item.assignmentId })
+          }}
         >
-          <Text style={styles.startButtonText}>Start Audit</Text>
+          <Text style={styles.startButtonText}>
+            {item.isInProgress ? 'Continue Audit' : 'Start Audit'}
+          </Text>
         </TouchableOpacity>
       </TouchableOpacity>
     );
   };
 
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#0066CC" />
+        <Text style={styles.loadingText}>Loading assignments...</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Audits</Text>
-        <TouchableOpacity style={styles.syncButton}>
+        <Text style={styles.headerTitle}>My Assignments</Text>
+        <TouchableOpacity style={styles.syncButton} onPress={handleRefresh}>
           <Ionicons name="sync-outline" size={24} color="#0066CC" />
         </TouchableOpacity>
       </View>
@@ -145,7 +302,7 @@ export default function AuditListScreen() {
         <Ionicons name="search-outline" size={20} color="#6c757d" style={styles.searchIcon} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search stores..."
+          placeholder="Search stores or templates..."
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
@@ -153,21 +310,6 @@ export default function AuditListScreen() {
       
       <View style={styles.filterContainer}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <FilterButton 
-            title="All Status" 
-            isActive={statusFilter === 'All'} 
-            onPress={() => setStatusFilter('All')} 
-          />
-          <FilterButton 
-            title="Assigned" 
-            isActive={statusFilter === 'Assigned'} 
-            onPress={() => setStatusFilter('Assigned')} 
-          />
-          <FilterButton 
-            title="In Progress" 
-            isActive={statusFilter === 'In Progress'} 
-            onPress={() => setStatusFilter('In Progress')} 
-          />
           <FilterButton 
             title="All Priority" 
             isActive={priorityFilter === 'All'} 
@@ -188,22 +330,61 @@ export default function AuditListScreen() {
             isActive={priorityFilter === 'Low'} 
             onPress={() => setPriorityFilter('Low')} 
           />
+          <FilterButton 
+            title="All Due" 
+            isActive={dueFilter === 'All'} 
+            onPress={() => setDueFilter('All')} 
+          />
+          <FilterButton 
+            title="Overdue" 
+            isActive={dueFilter === 'Overdue'} 
+            onPress={() => setDueFilter('Overdue')} 
+          />
+          <FilterButton 
+            title="Due Today" 
+            isActive={dueFilter === 'Due Today'} 
+            onPress={() => setDueFilter('Due Today')} 
+          />
+          <FilterButton 
+            title="Due This Week" 
+            isActive={dueFilter === 'Due This Week'} 
+            onPress={() => setDueFilter('Due This Week')} 
+          />
+          <FilterButton 
+            title="Due Next Week" 
+            isActive={dueFilter === 'Due Next Week'} 
+            onPress={() => setDueFilter('Due Next Week')} 
+          />
         </ScrollView>
       </View>
       
-      <FlatList
-        data={filteredAudits}
-        renderItem={renderAuditItem}
-        keyExtractor={item => item.id}
-        contentContainerStyle={styles.listContainer}
-        showsVerticalScrollIndicator={false}
-      />
+      {filteredAudits.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <Ionicons name="clipboard-outline" size={48} color="#6c757d" />
+          <Text style={styles.emptyTitle}>No assignments found</Text>
+          <Text style={styles.emptyText}>
+            {assignments.length === 0 
+              ? 'You have no assignments yet.' 
+              : 'No assignments match your current filters.'}
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={filteredAudits}
+          renderItem={renderAuditItem}
+          keyExtractor={(item: AuditItem) => item.id}
+          contentContainerStyle={styles.listContainer}
+          showsVerticalScrollIndicator={false}
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+        />
+      )}
     </View>
   );
 }
 
 // Filter button component
-const FilterButton = ({ title, isActive, onPress }) => (
+const FilterButton: React.FC<FilterButtonProps> = ({ title, isActive, onPress }) => (
   <TouchableOpacity 
     style={[styles.filterButton, isActive && styles.activeFilterButton]} 
     onPress={onPress}
@@ -219,6 +400,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f7fa',
     padding: 16,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f7fa',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#6c757d',
   },
   header: {
     flexDirection: 'row',
@@ -285,6 +477,25 @@ const styles = StyleSheet.create({
   listContainer: {
     paddingBottom: 16,
   },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 32,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#212529',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#6c757d',
+    textAlign: 'center',
+    lineHeight: 24,
+  },
   auditCard: {
     backgroundColor: 'white',
     borderRadius: 12,
@@ -299,14 +510,22 @@ const styles = StyleSheet.create({
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 8,
+  },
+  storeNameContainer: {
+    flex: 1,
+    marginRight: 8,
   },
   storeName: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#212529',
-    flex: 1,
+  },
+  templateName: {
+    fontSize: 14,
+    color: '#6c757d',
+    marginTop: 2,
   },
   statusBadge: {
     paddingHorizontal: 8,
@@ -321,12 +540,25 @@ const styles = StyleSheet.create({
   addressContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   addressText: {
     fontSize: 14,
     color: '#6c757d',
     marginLeft: 4,
+    flex: 1,
+  },
+  notesContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  notesText: {
+    fontSize: 14,
+    color: '#6c757d',
+    marginLeft: 4,
+    flex: 1,
+    fontStyle: 'italic',
   },
   cardFooter: {
     flexDirection: 'row',

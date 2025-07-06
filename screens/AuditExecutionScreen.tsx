@@ -9,185 +9,301 @@ import {
   Image,
   Switch,
   ActivityIndicator,
-  Alert
+  Alert,
+  Modal,
+  Platform
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { toast } from 'sonner-native';
+import { useAuth } from '../contexts/AuthContext';
+import { 
+  authService, 
+  Assignment, 
+  TemplateDetails, 
+  TemplateQuestion, 
+  AuditResponse,
+  CreateAuditRequest 
+} from '../services/AuthService';
+import { 
+  auditService, 
+  AuditResponseDto, 
+  CreateAuditDto, 
+  AuditProgressData 
+} from '../services/AuditService';
 
-// Mock audit questions data
-const mockAuditQuestions = {
-  's1': [
-    {
-      id: 'q1',
-      type: 'yesno',
-      question: 'Is the store exterior clean and well-maintained?',
-      required: true,
-      answer: null,
-      notes: '',
-      photos: []
-    },
-    {
-      id: 'q2',
-      type: 'yesno',
-      question: 'Are all exterior lights functioning properly?',
-      required: true,
-      answer: null,
-      notes: '',
-      photos: []
-    },
-    {
-      id: 'q3',
-      type: 'rating',
-      question: 'Rate the visibility of store signage from the street (1-5)',
-      required: true,
-      answer: null,
-      notes: '',
-      photos: []
-    },
-    {
-      id: 'q4',
-      type: 'text',
-      question: 'Note any damage to the building exterior',
-      required: false,
-      answer: '',
-      notes: '',
-      photos: []
-    },
-    {
-      id: 'q5',
-      type: 'multiple',
-      question: 'Which promotional materials are visible from outside?',
-      options: ['Sale banners', 'Product displays', 'Seasonal decorations', 'Digital screens', 'None'],
-      required: true,
-      answer: [],
-      notes: '',
-      photos: []
-    }
-  ],
-  's2': [
-    {
-      id: 'q6',
-      type: 'yesno',
-      question: 'Is the entrance area clean and free of obstacles?',
-      required: true,
-      answer: null,
-      notes: '',
-      photos: []
-    },
-    {
-      id: 'q7',
-      type: 'yesno',
-      question: 'Are shopping carts/baskets clean and organized?',
-      required: true,
-      answer: null,
-      notes: '',
-      photos: []
-    },
-    {
-      id: 'q8',
-      type: 'single',
-      question: 'How would you rate the welcome experience?',
-      options: ['Excellent', 'Good', 'Average', 'Poor', 'Very Poor'],
-      required: true,
-      answer: null,
-      notes: '',
-      photos: []
-    }
-  ],
-  's3': [
-    {
-      id: 'q9',
-      type: 'yesno',
-      question: 'Are products arranged according to the planogram?',
-      required: true,
-      answer: null,
-      notes: '',
-      photos: []
-    },
-    {
-      id: 'q10',
-      type: 'yesno',
-      question: 'Are all required SKUs present on shelves?',
-      required: true,
-      answer: null,
-      notes: '',
-      photos: []
-    },
-    {
-      id: 'q11',
-      type: 'number',
-      question: 'How many empty shelf spaces were observed?',
-      required: true,
-      answer: '',
-      notes: '',
-      photos: []
-    }
-  ]
-};
+interface QuestionWithAnswer extends TemplateQuestion {
+  answer: any;
+  notes: string;
+  photos: string[];
+  sectionTitle: string;
+  sectionIndex: number;
+}
 
-// Mock section data
-const mockSections = {
-  's1': {
-    id: 's1',
-    title: 'Store Exterior',
-    description: 'Assess the exterior appearance and signage',
-    questionCount: 5,
-    completed: false
-  },
-  's2': {
-    id: 's2',
-    title: 'Entrance & Lobby',
-    description: 'Check entrance cleanliness and customer welcome area',
-    questionCount: 3,
-    completed: false
-  },
-  's3': {
-    id: 's3',
-    title: 'Product Placement',
-    description: 'Verify product placement according to planogram',
-    questionCount: 3,
-    completed: false
-  }
-};
+interface RouteParams {
+  auditId?: string;
+  assignmentId?: string;
+  sectionId?: string;
+}
 
 export default function AuditExecutionScreen() {
   const navigation = useNavigation();
   const route = useRoute();
-  const { auditId, sectionId = 's1' } = route.params || {};
+  const { user } = useAuth();
+  const { auditId, assignmentId, sectionId } = (route.params as RouteParams) || {};
   
-  const [currentSectionId, setCurrentSectionId] = useState(sectionId);
-  const [questions, setQuestions] = useState([]);
-  const [currentSection, setCurrentSection] = useState(null);
+  // State management
+  const [assignment, setAssignment] = useState<Assignment | null>(null);
+  const [template, setTemplate] = useState<TemplateDetails | null>(null);
+  const [audit, setAudit] = useState<AuditResponseDto | null>(null);
+  const [questions, setQuestions] = useState<QuestionWithAnswer[]>([]);
+  const [currentSection, setCurrentSection] = useState<string>('all');
+  const [sections, setSections] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showSectionList, setShowSectionList] = useState(false);
   
-  // Load questions for the current section
-  useEffect(() => {
-    setLoading(true);
-    
-    // Simulate API call delay
-    setTimeout(() => {
-      const sectionQuestions = mockAuditQuestions[currentSectionId] || [];
-      setQuestions(sectionQuestions);
-      setCurrentSection(mockSections[currentSectionId]);
-      setLoading(false);
-    }, 500);
-  }, [currentSectionId]);
+  // Date/Time picker states
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
+  const [tempDate, setTempDate] = useState(new Date());
   
-  const handleSaveProgress = () => {
-    setSaving(true);
-    
-    // Simulate saving delay
-    setTimeout(() => {
-      setSaving(false);
-      toast.success('Progress saved successfully');
-    }, 1000);
+  // Dropdown states
+  const [openDropdowns, setOpenDropdowns] = useState<{ [key: string]: boolean }>({});
+  
+  // Load assignment and template data
+  useEffect(() => {
+    loadAuditData();
+  }, [assignmentId]);
+  
+  const loadAuditData = async () => {
+    try {
+      setLoading(true);
+      
+      if (!assignmentId) {
+        Alert.alert('Error', 'No assignment ID provided');
+        navigation.goBack();
+        return;
+      }
+
+      // Load assignment details
+      const assignmentData = await authService.getAssignmentDetails(assignmentId);
+      setAssignment(assignmentData);
+
+      // Load template with questions
+      const templateData = await authService.getTemplateDetails(assignmentData.templateId);
+      setTemplate(templateData);
+
+      // Create or load existing audit
+      let auditData: AuditResponseDto;
+      
+      if (auditId) {
+        // Load existing audit by ID
+        auditData = await auditService.getAuditById(auditId);
+      } else {
+        // Try to find existing audit for this assignment first
+        console.log('No auditId provided, searching for existing audit for assignment:', assignmentId);
+        
+        try {
+          // Try to find existing audit for this assignment
+          if (!user?.userId) {
+            throw new Error('User not authenticated');
+          }
+          
+          const existingAudit = await auditService.findExistingAuditForAssignment(
+            assignmentData.templateId, 
+            user.userId,
+            assignmentId
+          );
+          
+          if (existingAudit) {
+            console.log('Found existing audit:', existingAudit.auditId);
+            auditData = await auditService.getAuditById(existingAudit.auditId);
+          } else {
+            console.log('No existing audit found, creating new one');
+            // Create new audit
+            const createAuditData: CreateAuditDto = {
+              templateId: assignmentData.templateId,
+              assignmentId: assignmentId,
+              storeInfo: assignmentData.storeInfo ? JSON.parse(assignmentData.storeInfo) : null,
+              location: null // Will be set when location is captured
+            };
+            
+            auditData = await auditService.createAudit(createAuditData);
+          }
+        } catch (error) {
+          console.log('Error finding existing audit, creating new one:', error);
+          // Create new audit as fallback
+          const createAuditData: CreateAuditDto = {
+            templateId: assignmentData.templateId,
+            assignmentId: assignmentId,
+            storeInfo: assignmentData.storeInfo ? JSON.parse(assignmentData.storeInfo) : null,
+            location: null // Will be set when location is captured
+          };
+          
+          auditData = await auditService.createAudit(createAuditData);
+        }
+      }
+      
+      setAudit(auditData);
+
+      // Flatten questions from all sections and initialize with answer fields
+      const allQuestions: QuestionWithAnswer[] = [];
+      
+      templateData.questions.sections.forEach((section, sectionIndex) => {
+        section.questions.forEach((question) => {
+          allQuestions.push({
+            ...question,
+            answer: getInitialAnswer(question.type),
+            notes: '',
+            photos: [],
+            sectionTitle: section.title,
+            sectionIndex: sectionIndex
+          });
+        });
+      });
+
+      // Load existing progress if available
+      console.log('Loading progress for audit:', auditData.auditId);
+      console.log('Server responses:', auditData.responses);
+      
+      let hasServerResponses = false;
+      if (auditData.responses && Object.keys(auditData.responses).length > 0) {
+        const existingResponses = auditData.responses;
+        allQuestions.forEach(question => {
+          if (existingResponses[question.id]) {
+            const response = existingResponses[question.id];
+            question.answer = response.answer || getInitialAnswer(question.type);
+            question.notes = response.notes || '';
+            question.photos = response.photos || [];
+          }
+        });
+        hasServerResponses = true;
+        console.log('Loaded responses from server');
+      }
+      
+      // If no server responses, try to load from local storage
+      if (!hasServerResponses) {
+        console.log('No server responses, trying local storage...');
+        const localProgress = await auditService.getAuditProgress(auditData.auditId);
+        console.log('Local progress data:', localProgress);
+        
+        if (localProgress && localProgress.responses && Object.keys(localProgress.responses).length > 0) {
+          allQuestions.forEach(question => {
+            if (localProgress.responses[question.id]) {
+              const response = localProgress.responses[question.id];
+              question.answer = response.answer || getInitialAnswer(question.type);
+              question.notes = response.notes || '';
+              question.photos = response.photos || [];
+            }
+          });
+          console.log('Loaded responses from local storage');
+        } else {
+          console.log('No local progress data found');
+        }
+      }
+
+      setQuestions(allQuestions);
+
+      // Extract section titles for navigation
+      const sectionTitles = ['All', ...templateData.questions.sections.map(s => s.title)];
+      setSections(sectionTitles);
+      setCurrentSection(sectionId || (sectionTitles.length > 1 ? sectionTitles[1] : 'All'));
+
+      // Update assignment status to "In Progress" if it's still "Assigned"
+      if (assignmentData.status === 'Assigned') {
+        await authService.updateAssignmentStatus(assignmentId, 'In Progress');
+      }
+
+    } catch (error) {
+      console.error('Failed to load audit data:', error);
+      Alert.alert('Error', 'Failed to load audit data. Please try again.');
+      navigation.goBack();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getInitialAnswer = (type: string): any => {
+    switch (type) {
+      case 'checkbox':
+      case 'multiple_choice':
+        return [];
+      case 'text':
+      case 'textarea':
+      case 'number':
+      case 'numeric':
+      case 'phone':
+      case 'email':
+        return '';
+      case 'dropdown':
+      case 'radio':
+      case 'single_choice':
+      case 'rating':
+        return null;
+      case 'date':
+      case 'time':
+      case 'date_time':
+        return null;
+      case 'image':
+      case 'file_upload':
+        return [];
+      case 'location':
+      case 'gps':
+        return null;
+      case 'barcode':
+        return '';
+      case 'signature':
+        return null;
+      default:
+        return null;
+    }
   };
   
-  const handleChangeSection = (newSectionId) => {
+  const handleSaveProgress = async () => {
+    setSaving(true);
+    
+    try {
+      if (!audit) {
+        Alert.alert('Error', 'No audit found to save progress');
+        return;
+      }
+
+      // Prepare audit responses
+      const responses: { [key: string]: any } = {};
+      questions.forEach(q => {
+        if (q.answer !== null && q.answer !== '' && (!Array.isArray(q.answer) || q.answer.length > 0)) {
+          responses[q.id] = {
+            answer: q.answer,
+            notes: q.notes || undefined,
+            photos: q.photos.length > 0 ? q.photos : undefined
+          };
+        }
+      });
+
+      const progressData: AuditProgressData = {
+        auditId: audit.auditId,
+        responses,
+        storeInfo: assignment?.storeInfo ? JSON.parse(assignment.storeInfo) : null,
+        location: null, // Will be updated when location is captured
+        media: null // Will be updated when media is captured
+      };
+
+      await auditService.saveAuditProgress(audit.auditId, progressData);
+      Alert.alert('Success', 'Progress saved successfully');
+      
+    } catch (error) {
+      console.error('Failed to save progress:', error);
+      Alert.alert('Error', 'Failed to save progress. Changes will be saved locally.');
+    } finally {
+      setSaving(false);
+    }
+  };
+  
+  const handleChangeSection = (newSection: string) => {
     if (saving) return;
     
     // Check if there are unsaved changes
@@ -203,16 +319,16 @@ export default function AuditExecutionScreen() {
           {
             text: "Don't Save",
             onPress: () => {
-              setCurrentSectionId(newSectionId);
+              setCurrentSection(newSection);
               setShowSectionList(false);
             },
             style: "destructive"
           },
           {
             text: "Save",
-            onPress: () => {
-              handleSaveProgress();
-              setCurrentSectionId(newSectionId);
+            onPress: async () => {
+              await handleSaveProgress();
+              setCurrentSection(newSection);
               setShowSectionList(false);
             }
           },
@@ -223,12 +339,12 @@ export default function AuditExecutionScreen() {
         ]
       );
     } else {
-      setCurrentSectionId(newSectionId);
+      setCurrentSection(newSection);
       setShowSectionList(false);
     }
   };
   
-  const handleAnswerChange = (questionId, value) => {
+  const handleAnswerChange = (questionId: string, value: any) => {
     setQuestions(prevQuestions => 
       prevQuestions.map(q => 
         q.id === questionId ? { ...q, answer: value } : q
@@ -236,7 +352,7 @@ export default function AuditExecutionScreen() {
     );
   };
   
-  const handleNotesChange = (questionId, value) => {
+  const handleNotesChange = (questionId: string, value: string) => {
     setQuestions(prevQuestions => 
       prevQuestions.map(q => 
         q.id === questionId ? { ...q, notes: value } : q
@@ -244,9 +360,9 @@ export default function AuditExecutionScreen() {
     );
   };
   
-  const handleAddPhoto = (questionId) => {
+  const handleAddPhoto = (questionId: string) => {
     // In a real app, this would open the camera
-    const newPhotoUrl = `https://api.a0.dev/assets/image?text=Audit%20Photo&aspect=4:3&seed=${Math.random()}`;
+    const newPhotoUrl = `https://api.dicebear.com/7.x/shapes/svg?seed=${Math.random()}`;
     
     setQuestions(prevQuestions => 
       prevQuestions.map(q => 
@@ -256,10 +372,10 @@ export default function AuditExecutionScreen() {
       )
     );
     
-    toast.success('Photo added');
+    Alert.alert('Success', 'Photo added (demo)');
   };
   
-  const handleRemovePhoto = (questionId, photoIndex) => {
+  const handleRemovePhoto = (questionId: string, photoIndex: number) => {
     setQuestions(prevQuestions => 
       prevQuestions.map(q => 
         q.id === questionId 
@@ -271,10 +387,121 @@ export default function AuditExecutionScreen() {
       )
     );
   };
+
+  const handleImagePicker = async (questionId: string) => {
+    // Request permissions
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Please grant permission to access your photo library');
+      return;
+    }
+
+    // Launch image picker
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 1,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      const currentImages = questions.find(q => q.id === questionId)?.answer || [];
+      handleAnswerChange(questionId, [...currentImages, result.assets[0].uri]);
+    }
+  };
+
+  const handleCameraCapture = async (questionId: string) => {
+    // Request camera permissions
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Please grant permission to access your camera');
+      return;
+    }
+
+    // Launch camera
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: true,
+      aspect: [4, 3],
+      quality: 1,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      const currentImages = questions.find(q => q.id === questionId)?.answer || [];
+      handleAnswerChange(questionId, [...currentImages, result.assets[0].uri]);
+    }
+  };
+
+  const handleLocationPicker = async (questionId: string) => {
+    try {
+      // Request location permissions
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Please grant permission to access your location');
+        return;
+      }
+
+      // Get current location
+      const location = await Location.getCurrentPositionAsync({});
+      const { latitude, longitude } = location.coords;
+
+      // Get address from coordinates
+      const address = await Location.reverseGeocodeAsync({ latitude, longitude });
+      const addressString = address[0] 
+        ? `${address[0].name || ''} ${address[0].street || ''}, ${address[0].city || ''}, ${address[0].region || ''}`.trim()
+        : `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+
+      const locationData = {
+        latitude,
+        longitude,
+        address: addressString
+      };
+
+      handleAnswerChange(questionId, locationData);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to get location. Please try again.');
+    }
+  };
+
+  const handleDateConfirm = (selectedDate: Date) => {
+    setShowDatePicker(false);
+    if (activeQuestionId) {
+      const dateString = selectedDate.toISOString().split('T')[0];
+      handleAnswerChange(activeQuestionId, dateString);
+    }
+    setActiveQuestionId(null);
+  };
+
+  const handleTimeConfirm = (selectedTime: Date) => {
+    setShowTimePicker(false);
+    if (activeQuestionId) {
+      const timeString = selectedTime.toTimeString().split(' ')[0].substring(0, 5);
+      handleAnswerChange(activeQuestionId, timeString);
+    }
+    setActiveQuestionId(null);
+  };
+
+  const handleDateCancel = () => {
+    setShowDatePicker(false);
+    setActiveQuestionId(null);
+  };
+
+  const handleTimeCancel = () => {
+    setShowTimePicker(false);
+    setActiveQuestionId(null);
+  };
+
+  const toggleDropdown = (questionId: string) => {
+    setOpenDropdowns(prev => ({
+      ...prev,
+      [questionId]: !prev[questionId]
+    }));
+  };
   
-  const handleCompleteSection = () => {
+  const handleCompleteSection = async () => {
+    const sectionQuestions = getCurrentSectionQuestions();
+    
     // Check for required questions
-    const unansweredRequired = questions.filter(q => 
+    const unansweredRequired = sectionQuestions.filter(q => 
       q.required && (q.answer === null || q.answer === '' || (Array.isArray(q.answer) && q.answer.length === 0))
     );
     
@@ -288,35 +515,18 @@ export default function AuditExecutionScreen() {
     }
     
     // Save progress
-    handleSaveProgress();
+    await handleSaveProgress();
     
-    // Get next section or complete audit
-    const sectionIds = Object.keys(mockSections);
-    const currentIndex = sectionIds.indexOf(currentSectionId);
-    
-    if (currentIndex < sectionIds.length - 1) {
-      // Move to next section
-      const nextSectionId = sectionIds[currentIndex + 1];
-      Alert.alert(
-        "Section Complete",
-        "Would you like to continue to the next section?",
-        [
-          {
-            text: "Later",
-            onPress: () => navigation.goBack(),
-            style: "cancel"
-          },
-          {
-            text: "Continue",
-            onPress: () => setCurrentSectionId(nextSectionId)
-          }
-        ]
-      );
-    } else {
-      // All sections complete
+    // Check if all questions are completed
+    const allAnswered = questions.every(q => 
+      !q.required || (q.answer !== null && q.answer !== '' && (!Array.isArray(q.answer) || q.answer.length > 0))
+    );
+
+    if (allAnswered) {
+      // All questions complete
       Alert.alert(
         "Audit Complete",
-        "All sections have been completed. Would you like to submit the audit now?",
+        "All questions have been completed. Would you like to submit the audit now?",
         [
           {
             text: "Later",
@@ -325,113 +535,169 @@ export default function AuditExecutionScreen() {
           },
           {
             text: "Submit",
-            onPress: () => navigation.navigate('AuditSubmit', { auditId })
+            onPress: () => (navigation as any).navigate('AuditSubmit', { 
+              assignmentId, 
+              auditId: audit?.auditId 
+            })
           }
         ]
       );
+    } else {
+      // Move to next section or go back
+      const currentSectionIndex = sections.indexOf(currentSection);
+      if (currentSectionIndex < sections.length - 1) {
+        const nextSection = sections[currentSectionIndex + 1];
+        Alert.alert(
+          "Section Complete",
+          "Would you like to continue to the next section?",
+          [
+            {
+              text: "Later",
+              onPress: () => navigation.goBack(),
+              style: "cancel"
+            },
+            {
+              text: "Continue",
+              onPress: () => setCurrentSection(nextSection)
+            }
+          ]
+        );
+      } else {
+        navigation.goBack();
+      }
     }
   };
+
+  const getCurrentSectionQuestions = (): QuestionWithAnswer[] => {
+    if (currentSection === 'All') {
+      return questions;
+    }
+    return questions.filter(q => q.sectionTitle === currentSection);
+  };
+
+  const getAnsweredCount = (sectionQuestions: QuestionWithAnswer[]): number => {
+    return sectionQuestions.filter(q => 
+      q.answer !== null && q.answer !== '' && (!Array.isArray(q.answer) || q.answer.length > 0)
+    ).length;
+  };
   
-  const renderQuestion = (question, index) => {
+  const renderQuestion = (question: QuestionWithAnswer, index: number) => {
     return (
       <View key={question.id} style={styles.questionCard}>
         <View style={styles.questionHeader}>
           <Text style={styles.questionNumber}>Q{index + 1}</Text>
           <Text style={styles.questionText}>
-            {question.question}
+            {question.text}
             {question.required && <Text style={styles.requiredIndicator}> *</Text>}
           </Text>
         </View>
         
         {/* Different input types based on question type */}
         <View style={styles.answerContainer}>
-          {question.type === 'yesno' && (
-            <View style={styles.yesNoContainer}>
-              <TouchableOpacity 
-                style={[
-                  styles.yesNoButton, 
-                  question.answer === true && styles.selectedYes
-                ]}
-                onPress={() => handleAnswerChange(question.id, true)}
-              >
-                <Ionicons 
-                  name={question.answer === true ? "checkmark-circle" : "checkmark-circle-outline"} 
-                  size={24} 
-                  color={question.answer === true ? "white" : "#28a745"} 
-                />
-                <Text style={[
-                  styles.yesNoText, 
-                  question.answer === true && styles.selectedButtonText
-                ]}>
-                  Yes
-                </Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[
-                  styles.yesNoButton, 
-                  question.answer === false && styles.selectedNo
-                ]}
-                onPress={() => handleAnswerChange(question.id, false)}
-              >
-                <Ionicons 
-                  name={question.answer === false ? "close-circle" : "close-circle-outline"} 
-                  size={24} 
-                  color={question.answer === false ? "white" : "#dc3545"} 
-                />
-                <Text style={[
-                  styles.yesNoText, 
-                  question.answer === false && styles.selectedButtonText
-                ]}>
-                  No
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-          
+          {/* Text Input */}
           {question.type === 'text' && (
             <TextInput
-              style={styles.textInput}
+              style={styles.singleLineInput}
               placeholder="Enter your answer"
               value={question.answer}
               onChangeText={(text) => handleAnswerChange(question.id, text)}
-              multiline
             />
           )}
           
-          {question.type === 'number' && (
+          {/* Textarea Input */}
+          {question.type === 'textarea' && (
+            <TextInput
+              style={[styles.textInput, { minHeight: 120 }]}
+              placeholder="Enter your detailed answer"
+              value={question.answer}
+              onChangeText={(text) => handleAnswerChange(question.id, text)}
+              multiline
+              numberOfLines={5}
+            />
+          )}
+          
+          {/* Number Input */}
+          {(question.type === 'number' || question.type === 'numeric') && (
             <TextInput
               style={styles.numberInput}
               placeholder="Enter a number"
-              value={question.answer.toString()}
+              value={question.answer?.toString() || ''}
               onChangeText={(text) => handleAnswerChange(question.id, text)}
               keyboardType="numeric"
             />
           )}
           
-          {question.type === 'rating' && (
-            <View style={styles.ratingContainer}>
-              {[1, 2, 3, 4, 5].map((rating) => (
-                <TouchableOpacity
-                  key={rating}
-                  style={[
-                    styles.ratingButton,
-                    question.answer === rating && styles.selectedRating
-                  ]}
-                  onPress={() => handleAnswerChange(question.id, rating)}
-                >
-                  <Text style={[
-                    styles.ratingText,
-                    question.answer === rating && styles.selectedRatingText
-                  ]}>
-                    {rating}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+          {/* Phone Input */}
+          {question.type === 'phone' && (
+            <TextInput
+              style={styles.textInput}
+              placeholder="Enter phone number"
+              value={question.answer}
+              onChangeText={(text) => handleAnswerChange(question.id, text)}
+              keyboardType="phone-pad"
+            />
+          )}
+          
+          {/* Email Input */}
+          {question.type === 'email' && (
+            <TextInput
+              style={styles.textInput}
+              placeholder="Enter email address"
+              value={question.answer}
+              onChangeText={(text) => handleAnswerChange(question.id, text)}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+          )}
+          
+          {/* Dropdown */}
+          {question.type === 'dropdown' && question.options && (
+            <View style={styles.dropdownContainer}>
+              <TouchableOpacity
+                style={styles.dropdownHeader}
+                onPress={() => toggleDropdown(question.id)}
+              >
+                <Text style={styles.dropdownHeaderText}>
+                  {question.answer || 'Select an option'}
+                </Text>
+                <Ionicons 
+                  name={openDropdowns[question.id] ? "chevron-up" : "chevron-down"} 
+                  size={20} 
+                  color="#6c757d" 
+                />
+              </TouchableOpacity>
+              {openDropdowns[question.id] && (
+                <View style={styles.dropdownOptions}>
+                  {question.options.map((option, idx) => (
+                    <TouchableOpacity
+                      key={idx}
+                      style={[
+                        styles.dropdownOption,
+                        question.answer === option && styles.selectedDropdownOption
+                      ]}
+                      onPress={() => {
+                        handleAnswerChange(question.id, option);
+                        toggleDropdown(question.id);
+                      }}
+                    >
+                      <Text style={[
+                        styles.dropdownOptionText,
+                        question.answer === option && styles.selectedDropdownOptionText
+                      ]}>
+                        {option}
+                      </Text>
+                      {question.answer === option && (
+                        <Ionicons name="checkmark" size={20} color="#0066CC" />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
             </View>
           )}
           
-          {question.type === 'single' && question.options && (
+          {/* Radio Buttons (Single Choice) */}
+          {(question.type === 'radio' || question.type === 'single_choice') && question.options && (
             <View style={styles.optionsContainer}>
               {question.options.map((option, idx) => (
                 <TouchableOpacity
@@ -458,7 +724,8 @@ export default function AuditExecutionScreen() {
             </View>
           )}
           
-          {question.type === 'multiple' && question.options && (
+          {/* Checkboxes (Multiple Choice) */}
+          {(question.type === 'checkbox' || question.type === 'multiple_choice') && question.options && (
             <View style={styles.optionsContainer}>
               {question.options.map((option, idx) => {
                 const isSelected = question.answer && question.answer.includes(option);
@@ -472,7 +739,7 @@ export default function AuditExecutionScreen() {
                     onPress={() => {
                       const currentAnswers = question.answer || [];
                       const newAnswers = isSelected
-                        ? currentAnswers.filter(a => a !== option)
+                        ? currentAnswers.filter((a: string) => a !== option)
                         : [...currentAnswers, option];
                       handleAnswerChange(question.id, newAnswers);
                     }}
@@ -493,62 +760,184 @@ export default function AuditExecutionScreen() {
               })}
             </View>
           )}
-        </View>
-        
-        {/* Notes section */}
-        <View style={styles.notesContainer}>
-          <Text style={styles.notesLabel}>Notes:</Text>
-          <TextInput
-            style={styles.notesInput}
-            placeholder="Add notes (optional)"
-            value={question.notes}
-            onChangeText={(text) => handleNotesChange(question.id, text)}
-            multiline
-          />
-        </View>
-        
-        {/* Photos section */}
-        <View style={styles.photosContainer}>
-          <View style={styles.photosHeader}>
-            <Text style={styles.photosLabel}>Photos:</Text>
-            <TouchableOpacity 
-              style={styles.addPhotoButton}
-              onPress={() => handleAddPhoto(question.id)}
-            >
-              <Ionicons name="camera-outline" size={18} color="#0066CC" />
-              <Text style={styles.addPhotoText}>Add Photo</Text>
-            </TouchableOpacity>
-          </View>
           
-          {question.photos.length > 0 ? (
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false}
-              style={styles.photosList}
-            >
-              {question.photos.map((photo, photoIndex) => (
-                <View key={photoIndex} style={styles.photoItem}>
-                  <Image
-                    source={{ uri: photo }}
-                    style={styles.photoImage}
-                    resizeMode="cover"
-                  />
+          {/* Rating Scale */}
+          {question.type === 'rating' && (
+            <View style={styles.ratingContainer}>
+              <View style={styles.starsContainer}>
+                {[1, 2, 3, 4, 5].map((rating) => (
                   <TouchableOpacity 
-                    style={styles.removePhotoButton}
-                    onPress={() => handleRemovePhoto(question.id, photoIndex)}
+                    key={rating}
+                    style={styles.starButton}
+                    onPress={() => handleAnswerChange(question.id, rating)}
                   >
-                    <Ionicons name="close-circle" size={24} color="#dc3545" />
+                    <Ionicons
+                      name={rating <= (question.answer || 0) ? "star" : "star-outline"}
+                      size={32}
+                      color={rating <= (question.answer || 0) ? "#FFD700" : "#e9ecef"}
+                    />
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Text style={styles.ratingText}>
+                {question.answer ? `${question.answer} out of 5 stars` : 'Tap to rate'}
+              </Text>
+            </View>
+          )}
+          
+          {/* Date Input */}
+          {(question.type === 'date' || question.type === 'date_time') && (
+            <TouchableOpacity 
+              style={styles.dateTimeButton}
+              onPress={() => {
+                setActiveQuestionId(question.id);
+                setTempDate(question.answer ? new Date(question.answer) : new Date());
+                setShowDatePicker(true);
+              }}
+            >
+              <Ionicons name="calendar-outline" size={20} color="#0066CC" />
+              <Text style={styles.dateTimeText}>
+                {question.answer || 'Select Date'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          
+          {/* Time Input */}
+          {question.type === 'time' && (
+            <TouchableOpacity 
+              style={styles.dateTimeButton}
+              onPress={() => {
+                setActiveQuestionId(question.id);
+                const timeValue = question.answer ? new Date(`1970-01-01T${question.answer}:00`) : new Date();
+                setTempDate(timeValue);
+                setShowTimePicker(true);
+              }}
+            >
+              <Ionicons name="time-outline" size={20} color="#0066CC" />
+              <Text style={styles.dateTimeText}>
+                {question.answer || 'Select Time'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          
+          {/* Image Upload */}
+          {(question.type === 'image' || question.type === 'file_upload') && (
+            <View style={styles.imageContainer}>
+              <View style={styles.imageUploadButtons}>
+                <TouchableOpacity 
+                  style={styles.imageUploadButton}
+                  onPress={() => handleCameraCapture(question.id)}
+                >
+                  <Ionicons name="camera-outline" size={24} color="#0066CC" />
+                  <Text style={styles.imageUploadText}>Camera</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={styles.imageUploadButton}
+                  onPress={() => handleImagePicker(question.id)}
+                >
+                  <Ionicons name="image-outline" size={24} color="#0066CC" />
+                  <Text style={styles.imageUploadText}>Gallery</Text>
+                </TouchableOpacity>
+              </View>
+              
+              {question.answer && question.answer.length > 0 && (
+                <ScrollView horizontal style={styles.imageList}>
+                  {question.answer.map((image: string, imgIndex: number) => (
+                    <View key={imgIndex} style={styles.imageItem}>
+                      <Image source={{ uri: image }} style={styles.imagePreview} />
+                      <TouchableOpacity 
+                        style={styles.removeImageButton}
+                        onPress={() => {
+                          const updatedImages = question.answer.filter((_: any, index: number) => index !== imgIndex);
+                          handleAnswerChange(question.id, updatedImages);
+                        }}
+                      >
+                        <Ionicons name="close-circle" size={20} color="#dc3545" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+          )}
+          
+          {/* Location Input */}
+          {(question.type === 'location' || question.type === 'gps') && (
+            <TouchableOpacity 
+              style={styles.locationButton}
+              onPress={() => handleLocationPicker(question.id)}
+            >
+              <Ionicons name="location-outline" size={20} color="#0066CC" />
+              <Text style={styles.locationText}>
+                {question.answer ? 
+                  `${question.answer.address || 'Location Selected'}` : 
+                  'Select Location'
+                }
+              </Text>
+            </TouchableOpacity>
+          )}
+          
+          {/* Barcode Scanner */}
+          {question.type === 'barcode' && (
+            <View style={styles.barcodeContainer}>
+              <TouchableOpacity 
+                style={styles.barcodeButton}
+                onPress={() => {
+                  // In a real app, this would open the barcode scanner
+                  Alert.alert('Barcode Scanner', 'Barcode scanner functionality would be implemented here');
+                }}
+              >
+                <Ionicons name="scan-outline" size={24} color="#0066CC" />
+                <Text style={styles.barcodeText}>Scan Barcode</Text>
+              </TouchableOpacity>
+              {question.answer && (
+                <View style={styles.barcodeResult}>
+                  <Text style={styles.barcodeResultText}>Scanned: {question.answer}</Text>
+                  <TouchableOpacity 
+                    style={styles.clearButton}
+                    onPress={() => handleAnswerChange(question.id, '')}
+                  >
+                    <Ionicons name="close-circle" size={20} color="#dc3545" />
                   </TouchableOpacity>
                 </View>
-              ))}
-            </ScrollView>
-          ) : (
-            <Text style={styles.noPhotosText}>No photos added</Text>
+              )}
+            </View>
+          )}
+          
+          {/* Signature Input */}
+          {question.type === 'signature' && (
+            <View style={styles.signatureContainer}>
+              <TouchableOpacity 
+                style={styles.signatureButton}
+                onPress={() => {
+                  // In a real app, this would open the signature pad
+                  Alert.alert('Signature Pad', 'Signature pad functionality would be implemented here');
+                }}
+              >
+                <Ionicons name="create-outline" size={24} color="#0066CC" />
+                <Text style={styles.signatureText}>
+                  {question.answer ? 'Signature Captured' : 'Add Signature'}
+                </Text>
+              </TouchableOpacity>
+              {question.answer && (
+                <TouchableOpacity 
+                  style={styles.clearButton}
+                  onPress={() => handleAnswerChange(question.id, null)}
+                >
+                  <Ionicons name="close-circle" size={20} color="#dc3545" />
+                  <Text style={styles.clearButtonText}>Clear</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           )}
         </View>
       </View>
     );
   };
+
+  const currentSectionQuestions = getCurrentSectionQuestions();
+  const answeredCount = getAnsweredCount(currentSectionQuestions);
   
   return (
     <SafeAreaView style={styles.container}>
@@ -565,7 +954,7 @@ export default function AuditExecutionScreen() {
           onPress={() => setShowSectionList(!showSectionList)}
         >
           <Text style={styles.sectionButtonText}>
-            {currentSection ? currentSection.title : 'Select Section'}
+            {currentSection}
           </Text>
           <Ionicons 
             name={showSectionList ? "chevron-up" : "chevron-down"} 
@@ -591,24 +980,21 @@ export default function AuditExecutionScreen() {
       {showSectionList && (
         <View style={styles.sectionListContainer}>
           <ScrollView style={styles.sectionList}>
-            {Object.values(mockSections).map((section) => (
+            {sections.map((section) => (
               <TouchableOpacity
-                key={section.id}
+                key={section}
                 style={[
                   styles.sectionListItem,
-                  currentSectionId === section.id && styles.activeSectionItem
+                  currentSection === section && styles.activeSectionItem
                 ]}
-                onPress={() => handleChangeSection(section.id)}
+                onPress={() => handleChangeSection(section)}
               >
                 <Text style={[
                   styles.sectionListItemText,
-                  currentSectionId === section.id && styles.activeSectionItemText
+                  currentSection === section && styles.activeSectionItemText
                 ]}>
-                  {section.title}
+                  {section}
                 </Text>
-                {section.completed && (
-                  <Ionicons name="checkmark-circle" size={20} color="#28a745" />
-                )}
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -618,25 +1004,29 @@ export default function AuditExecutionScreen() {
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#0066CC" />
-          <Text style={styles.loadingText}>Loading questions...</Text>
+          <Text style={styles.loadingText}>Loading audit questions...</Text>
         </View>
       ) : (
         <>
           <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-            {/* Section info */}
+            {/* Assignment info */}
             <View style={styles.sectionInfoCard}>
-              <Text style={styles.sectionTitle}>{currentSection?.title}</Text>
-              <Text style={styles.sectionDescription}>{currentSection?.description}</Text>
+              <Text style={styles.sectionTitle}>
+                {assignment?.template.name || 'Audit Template'}
+              </Text>
+              <Text style={styles.sectionDescription}>
+                {template?.description || 'Complete the audit questions below'}
+              </Text>
               <View style={styles.sectionProgress}>
                 <Text style={styles.progressText}>
-                  {questions.filter(q => q.answer !== null && q.answer !== '' && (!Array.isArray(q.answer) || q.answer.length > 0)).length} of {questions.length} questions answered
+                  {answeredCount} of {currentSectionQuestions.length} questions answered
                 </Text>
                 <View style={styles.progressBarBackground}>
                   <View 
                     style={[
                       styles.progressBarFill, 
                       { 
-                        width: `${(questions.filter(q => q.answer !== null && q.answer !== '' && (!Array.isArray(q.answer) || q.answer.length > 0)).length / questions.length) * 100}%` 
+                        width: `${(answeredCount / Math.max(currentSectionQuestions.length, 1)) * 100}%` 
                       }
                     ]} 
                   />
@@ -645,30 +1035,203 @@ export default function AuditExecutionScreen() {
             </View>
             
             {/* Questions */}
-            {questions.map((question, index) => renderQuestion(question, index))}
+            {currentSectionQuestions.map((question, index) => renderQuestion(question, index))}
             
             {/* Complete section button */}
             <TouchableOpacity 
               style={styles.completeSectionButton}
               onPress={handleCompleteSection}
             >
-              <Text style={styles.completeSectionButtonText}>Complete Section</Text>
+              <Text style={styles.completeSectionButtonText}>
+                {currentSection === 'All' || sections.length <= 2 ? 'Complete Audit' : 'Complete Section'}
+              </Text>
             </TouchableOpacity>
             
             <View style={styles.footer}>
               <Text style={styles.footerText}>
-                Auto-saved {saving ? 'saving...' : '2 minutes ago'}
+                {saving ? 'Saving...' : 'Progress saved automatically'}
               </Text>
             </View>
           </ScrollView>
-          
-          {/* Offline indicator */}
-          <View style={styles.offlineIndicator}>
-            <Ionicons name="cloud-offline-outline" size={16} color="white" />
-            <Text style={styles.offlineText}>Working offline - Changes will sync when online</Text>
-          </View>
         </>
       )}
+      
+      {/* Date Picker Modal */}
+      <Modal
+        visible={showDatePicker}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={handleDateCancel}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.datePickerModalContent}>
+            <Text style={styles.modalTitle}>Select Date</Text>
+            <View style={styles.calendarContainer}>
+              <View style={styles.calendarHeader}>
+                <TouchableOpacity 
+                  style={styles.calendarNavButton}
+                  onPress={() => {
+                    const newDate = new Date(tempDate);
+                    newDate.setMonth(newDate.getMonth() - 1);
+                    setTempDate(newDate);
+                  }}
+                >
+                  <Text style={styles.calendarNavText}>‹</Text>
+                </TouchableOpacity>
+                <Text style={styles.calendarHeaderText}>
+                  {tempDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                </Text>
+                <TouchableOpacity 
+                  style={styles.calendarNavButton}
+                  onPress={() => {
+                    const newDate = new Date(tempDate);
+                    newDate.setMonth(newDate.getMonth() + 1);
+                    setTempDate(newDate);
+                  }}
+                >
+                  <Text style={styles.calendarNavText}>›</Text>
+                </TouchableOpacity>
+              </View>
+              
+              <View style={styles.calendarWeekHeader}>
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                  <Text key={day} style={styles.calendarWeekDay}>{day}</Text>
+                ))}
+              </View>
+              
+              <View style={styles.calendarDays}>
+                {(() => {
+                  const days = [];
+                  const firstDay = new Date(tempDate.getFullYear(), tempDate.getMonth(), 1);
+                  const lastDay = new Date(tempDate.getFullYear(), tempDate.getMonth() + 1, 0);
+                  const startDate = new Date(firstDay);
+                  startDate.setDate(startDate.getDate() - firstDay.getDay());
+                  
+                  for (let i = 0; i < 42; i++) {
+                    const date = new Date(startDate);
+                    date.setDate(startDate.getDate() + i);
+                    const isCurrentMonth = date.getMonth() === tempDate.getMonth();
+                    const isSelected = date.toDateString() === tempDate.toDateString();
+                    const isToday = date.toDateString() === new Date().toDateString();
+                    
+                    days.push(
+                      <TouchableOpacity
+                        key={i}
+                        style={[
+                          styles.calendarDay,
+                          !isCurrentMonth && styles.calendarDayInactive,
+                          isSelected && styles.calendarDaySelected,
+                          isToday && !isSelected && styles.calendarDayToday
+                        ]}
+                        onPress={() => setTempDate(new Date(date))}
+                      >
+                        <Text style={[
+                          styles.calendarDayText,
+                          !isCurrentMonth && styles.calendarDayTextInactive,
+                          isSelected && styles.calendarDayTextSelected,
+                          isToday && !isSelected && styles.calendarDayTextToday
+                        ]}>
+                          {date.getDate()}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  }
+                  return days;
+                })()}
+              </View>
+            </View>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.modalButton} onPress={handleDateCancel}>
+                <Text style={styles.modalButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalButton, styles.confirmButton]} onPress={() => handleDateConfirm(tempDate)}>
+                <Text style={[styles.modalButtonText, styles.confirmButtonText]}>Confirm</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Time Picker Modal */}
+      <Modal
+        visible={showTimePicker}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={handleTimeCancel}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.timePickerModalContent}>
+            <Text style={styles.modalTitle}>Select Time</Text>
+            <View style={styles.timePickerContainer}>
+              <Text style={styles.timeDisplayText}>
+                {tempDate.toTimeString().split(' ')[0].substring(0, 5)}
+              </Text>
+              <View style={styles.timeControls}>
+                <View style={styles.timeSection}>
+                  <Text style={styles.timeLabel}>Hour</Text>
+                  <View style={styles.timeButtonRow}>
+                    <TouchableOpacity 
+                      style={styles.timeButton}
+                      onPress={() => {
+                        const newDate = new Date(tempDate);
+                        newDate.setHours((newDate.getHours() + 1) % 24);
+                        setTempDate(newDate);
+                      }}
+                    >
+                      <Text style={styles.timeButtonText}>+</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.timeValue}>{tempDate.getHours().toString().padStart(2, '0')}</Text>
+                    <TouchableOpacity 
+                      style={styles.timeButton}
+                      onPress={() => {
+                        const newDate = new Date(tempDate);
+                        newDate.setHours(newDate.getHours() === 0 ? 23 : newDate.getHours() - 1);
+                        setTempDate(newDate);
+                      }}
+                    >
+                      <Text style={styles.timeButtonText}>-</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <View style={styles.timeSection}>
+                  <Text style={styles.timeLabel}>Minute</Text>
+                  <View style={styles.timeButtonRow}>
+                    <TouchableOpacity 
+                      style={styles.timeButton}
+                      onPress={() => {
+                        const newDate = new Date(tempDate);
+                        newDate.setMinutes((newDate.getMinutes() + 5) % 60);
+                        setTempDate(newDate);
+                      }}
+                    >
+                      <Text style={styles.timeButtonText}>+</Text>
+                    </TouchableOpacity>
+                    <Text style={styles.timeValue}>{tempDate.getMinutes().toString().padStart(2, '0')}</Text>
+                    <TouchableOpacity 
+                      style={styles.timeButton}
+                      onPress={() => {
+                        const newDate = new Date(tempDate);
+                        newDate.setMinutes(newDate.getMinutes() < 5 ? 55 : newDate.getMinutes() - 5);
+                        setTempDate(newDate);
+                      }}
+                    >
+                      <Text style={styles.timeButtonText}>-</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </View>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={styles.modalButton} onPress={handleTimeCancel}>
+                <Text style={styles.modalButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalButton, styles.confirmButton]} onPress={() => handleTimeConfirm(tempDate)}>
+                <Text style={[styles.modalButtonText, styles.confirmButtonText]}>Confirm</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -843,37 +1406,14 @@ const styles = StyleSheet.create({
   answerContainer: {
     marginBottom: 16,
   },
-  yesNoContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  yesNoButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 24,
-    borderRadius: 8,
+  singleLineInput: {
     borderWidth: 1,
-    borderColor: '#dee2e6',
-    minWidth: 120,
-  },
-  selectedYes: {
-    backgroundColor: '#28a745',
-    borderColor: '#28a745',
-  },
-  selectedNo: {
-    backgroundColor: '#dc3545',
-    borderColor: '#dc3545',
-  },
-  yesNoText: {
-    marginLeft: 8,
+    borderColor: '#ced4da',
+    borderRadius: 8,
+    padding: 12,
     fontSize: 16,
-    fontWeight: '500',
     color: '#212529',
-  },
-  selectedButtonText: {
-    color: 'white',
+    height: 48,
   },
   textInput: {
     borderWidth: 1,
@@ -893,31 +1433,51 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#212529',
   },
-  ratingContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  dropdownContainer: {
     marginVertical: 8,
   },
-  ratingButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+  dropdownHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
     borderWidth: 1,
     borderColor: '#ced4da',
-    justifyContent: 'center',
-    alignItems: 'center',
+    borderRadius: 8,
+    backgroundColor: 'white',
   },
-  selectedRating: {
-    backgroundColor: '#0066CC',
-    borderColor: '#0066CC',
-  },
-  ratingText: {
-    fontSize: 18,
-    fontWeight: '600',
+  dropdownHeaderText: {
+    fontSize: 16,
     color: '#212529',
   },
-  selectedRatingText: {
-    color: 'white',
+  dropdownOptions: {
+    borderWidth: 1,
+    borderColor: '#ced4da',
+    borderRadius: 8,
+    marginTop: 4,
+    backgroundColor: 'white',
+    maxHeight: 200,
+  },
+  dropdownOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f3f5',
+  },
+  selectedDropdownOption: {
+    backgroundColor: '#e6f2ff',
+  },
+  dropdownOptionText: {
+    fontSize: 16,
+    color: '#212529',
+  },
+  selectedDropdownOptionText: {
+    fontWeight: '500',
+    color: '#0066CC',
   },
   optionsContainer: {
     marginVertical: 8,
@@ -942,74 +1502,91 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#0066CC',
   },
-  notesContainer: {
-    marginBottom: 16,
+  ratingContainer: {
+    marginVertical: 8,
+    alignItems: 'center',
   },
-  notesLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#212529',
+  starsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
     marginBottom: 8,
   },
-  notesInput: {
+  starButton: {
+    paddingHorizontal: 4,
+  },
+  ratingText: {
+    fontSize: 14,
+    color: '#6c757d',
+    textAlign: 'center',
+  },
+  dateTimeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
     borderWidth: 1,
     borderColor: '#ced4da',
     borderRadius: 8,
-    padding: 12,
-    fontSize: 14,
+  },
+  dateTimeText: {
+    marginLeft: 8,
+    fontSize: 16,
     color: '#212529',
-    minHeight: 80,
-    textAlignVertical: 'top',
   },
-  photosContainer: {
-    marginBottom: 8,
+  imageContainer: {
+    marginBottom: 16,
   },
-  photosHeader: {
+  imageUploadButtons: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 12,
   },
-  photosLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#212529',
-  },
-  addPhotoButton: {
+  imageUploadButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#ced4da',
+    borderRadius: 8,
+    flex: 0.48,
+    justifyContent: 'center',
   },
-  addPhotoText: {
-    marginLeft: 4,
-    fontSize: 14,
+  imageUploadText: {
+    marginLeft: 8,
+    fontSize: 16,
     color: '#0066CC',
   },
-  photosList: {
+  imageList: {
     flexDirection: 'row',
   },
-  photoItem: {
+  imageItem: {
     position: 'relative',
     marginRight: 8,
     marginBottom: 8,
   },
-  photoImage: {
+  imagePreview: {
     width: 100,
     height: 100,
     borderRadius: 8,
   },
-  removePhotoButton: {
+  removeImageButton: {
     position: 'absolute',
     top: -8,
     right: -8,
     backgroundColor: 'white',
     borderRadius: 12,
   },
-  noPhotosText: {
-    fontSize: 14,
-    color: '#6c757d',
-    fontStyle: 'italic',
-    marginVertical: 8,
+  locationButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#ced4da',
+    borderRadius: 8,
+  },
+  locationText: {
+    marginLeft: 8,
+    fontSize: 16,
+    color: '#212529',
   },
   completeSectionButton: {
     backgroundColor: '#0066CC',
@@ -1032,16 +1609,274 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6c757d',
   },
-  offlineIndicator: {
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 20,
+    width: '80%',
+    alignItems: 'center',
+  },
+  datePickerModalContent: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 20,
+    width: '90%',
+    maxWidth: 400,
+    alignItems: 'center',
+  },
+  timePickerModalContent: {
+    backgroundColor: 'white',
+    borderRadius: 12,
+    padding: 20,
+    width: '80%',
+    maxWidth: 300,
+    alignItems: 'center',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#212529',
+    marginBottom: 16,
+  },
+  dateInput: {
+    borderWidth: 1,
+    borderColor: '#ced4da',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    color: '#212529',
+    width: '100%',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginHorizontal: 4,
+    borderWidth: 1,
+    borderColor: '#ced4da',
+    alignItems: 'center',
+  },
+  confirmButton: {
+    backgroundColor: '#0066CC',
+    borderColor: '#0066CC',
+  },
+  modalButtonText: {
+    fontSize: 16,
+    color: '#212529',
+  },
+  confirmButtonText: {
+    color: 'white',
+  },
+  timePickerContainer: {
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  timeDisplayText: {
+    fontSize: 32,
+    fontWeight: '600',
+    color: '#0066CC',
+    marginBottom: 20,
+    fontFamily: 'monospace',
+  },
+  timeControls: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+  },
+  timeSection: {
+    alignItems: 'center',
+  },
+  timeButtonRow: {
+    alignItems: 'center',
+  },
+  timeButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#0066CC',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginVertical: 8,
+  },
+  timeButtonText: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: 'white',
+  },
+  timeValue: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: '#212529',
+    marginVertical: 12,
+    minWidth: 40,
+    textAlign: 'center',
+    fontFamily: 'monospace',
+  },
+  timeLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#6c757d',
+    marginBottom: 8,
+  },
+  calendarContainer: {
+    backgroundColor: 'white',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
+  },
+  calendarHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#6c757d',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    justifyContent: 'space-between',
+    marginBottom: 16,
   },
-  offlineText: {
+  calendarNavButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f8f9fa',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  calendarNavText: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#0066CC',
+  },
+  calendarHeaderText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#212529',
+  },
+  calendarWeekHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 8,
+  },
+  calendarWeekDay: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6c757d',
+    textAlign: 'center',
+    width: 40,
+  },
+  calendarDays: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  calendarDay: {
+    width: '14.28%',
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  calendarDayInactive: {
+    opacity: 0.3,
+  },
+  calendarDaySelected: {
+    backgroundColor: '#0066CC',
+    borderRadius: 20,
+  },
+  calendarDayToday: {
+    borderWidth: 2,
+    borderColor: '#0066CC',
+    borderRadius: 20,
+  },
+  calendarDayText: {
+    fontSize: 16,
+    color: '#212529',
+  },
+  calendarDayTextInactive: {
+    color: '#6c757d',
+  },
+  calendarDayTextSelected: {
     color: 'white',
-    fontSize: 14,
+    fontWeight: '600',
+  },
+  calendarDayTextToday: {
+    color: '#0066CC',
+    fontWeight: '600',
+  },
+  barcodeContainer: {
+    marginVertical: 8,
+  },
+  barcodeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#ced4da',
+    borderRadius: 8,
+    backgroundColor: '#f8f9fa',
+  },
+  barcodeText: {
     marginLeft: 8,
+    fontSize: 16,
+    color: '#0066CC',
+    fontWeight: '500',
+  },
+  barcodeResult: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    padding: 12,
+    backgroundColor: '#e6f2ff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#0066CC',
+  },
+  barcodeResultText: {
+    fontSize: 14,
+    color: '#0066CC',
+    fontWeight: '500',
+  },
+  clearButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 4,
+  },
+  clearButtonText: {
+    marginLeft: 4,
+    fontSize: 12,
+    color: '#dc3545',
+  },
+  signatureContainer: {
+    marginVertical: 8,
+  },
+  signatureButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#ced4da',
+    borderRadius: 8,
+    backgroundColor: '#f8f9fa',
+  },
+  signatureText: {
+    marginLeft: 8,
+    fontSize: 16,
+    color: '#0066CC',
+    fontWeight: '500',
   },
 });

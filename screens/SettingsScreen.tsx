@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAuth } from '../contexts/AuthContext';
+import { useNavigation } from '@react-navigation/native';
 
 export default function SettingsScreen() {
   const [syncOnCellular, setSyncOnCellular] = useState(false);
@@ -9,6 +11,8 @@ export default function SettingsScreen() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [darkModeEnabled, setDarkModeEnabled] = useState(false);
   const [biometricEnabled, setBiometricEnabled] = useState(false);
+  const { user, logout } = useAuth();
+  const navigation = useNavigation();
 
   const handleLogout = () => {
     Alert.alert(
@@ -21,7 +25,13 @@ export default function SettingsScreen() {
         },
         { 
           text: "Logout", 
-          onPress: () => console.log("Logout pressed"),
+          onPress: async () => {
+            try {
+              await logout();
+            } catch (error) {
+              console.error('Logout error:', error);
+            }
+          },
           style: "destructive"
         }
       ]
@@ -74,12 +84,20 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <View style={styles.profileContainer}>
             <View style={styles.profileIcon}>
-              <Text style={styles.profileInitials}>JD</Text>
+              <Text style={styles.profileInitials}>
+                {user ? `${user.firstName[0]}${user.lastName[0]}` : 'U'}
+              </Text>
             </View>
             <View style={styles.profileInfo}>
-              <Text style={styles.profileName}>John Doe</Text>
-              <Text style={styles.profileRole}>Field Auditor</Text>
-              <Text style={styles.profileEmail}>john.doe@company.com</Text>
+              <Text style={styles.profileName}>
+                {user ? `${user.firstName} ${user.lastName}` : 'User'}
+              </Text>
+              <Text style={styles.profileRole}>
+                {user ? user.role : 'Role'}
+              </Text>
+              <Text style={styles.profileEmail}>
+                {user ? user.username : 'username'}
+              </Text>
             </View>
           </View>
         </View>
@@ -172,6 +190,24 @@ export default function SettingsScreen() {
           <TouchableOpacity style={styles.menuItem}>
             <Ionicons name="document-text-outline" size={24} color="#0066CC" />
             <Text style={styles.menuItemText}>Terms & Privacy Policy</Text>
+            <Ionicons name="chevron-forward" size={20} color="#6c757d" />
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.menuItem}
+            onPress={() => navigation.navigate('Debug' as never)}
+          >
+            <Ionicons name="bug-outline" size={24} color="#0066CC" />
+            <Text style={styles.menuItemText}>Debug Console</Text>
+            <Ionicons name="chevron-forward" size={20} color="#6c757d" />
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.menuItem}
+            onPress={() => navigation.navigate('ApiTest' as never)}
+          >
+            <Ionicons name="flash-outline" size={24} color="#dc3545" />
+            <Text style={styles.menuItemText}>API Test Tool</Text>
             <Ionicons name="chevron-forward" size={20} color="#6c757d" />
           </TouchableOpacity>
           

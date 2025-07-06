@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -13,116 +13,231 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useAuth } from '../contexts/AuthContext';
+import { 
+  authService, 
+  Assignment, 
+  TemplateDetails, 
+  CreateAuditRequest,
+  AuditResponse 
+} from '../services/AuthService';
+import { 
+  auditService, 
+  AuditResponseDto, 
+  SubmitAuditDto 
+} from '../services/AuditService';
 import { toast } from 'sonner-native';
 
-// Mock audit data
-const mockAuditSummary = {
-  '1': {
-    id: '1',
-    storeName: 'SuperMart Downtown',
-    address: '123 Main St, Downtown',
-    completedDate: new Date().toISOString(),
-    sections: [
-      {
-        id: 's1',
-        title: 'Store Exterior',
-        questionCount: 8,
-        answeredCount: 8,
-        score: 85
-      },
-      {
-        id: 's2',
-        title: 'Entrance & Lobby',
-        questionCount: 6,
-        answeredCount: 6,
-        score: 92
-      },
-      {
-        id: 's3',
-        title: 'Product Placement',
-        questionCount: 15,
-        answeredCount: 15,
-        score: 78
-      },
-      {
-        id: 's4',
-        title: 'Pricing & Promotions',
-        questionCount: 10,
-        answeredCount: 10,
-        score: 90
-      },
-      {
-        id: 's5',
-        title: 'Staff & Service',
-        questionCount: 7,
-        answeredCount: 7,
-        score: 88
-      }
-    ],
-    overallScore: 86,
-    photoCount: 12,
-    issuesCount: 3
-  }
-};
+interface RouteParams {
+  assignmentId?: string;
+  auditId?: string;
+}
 
 export default function AuditSubmitScreen() {
   const navigation = useNavigation();
   const route = useRoute();
-  const { auditId } = route.params || {};
+  const { user } = useAuth();
+  const { assignmentId, auditId } = (route.params as RouteParams) || {};
   
-  const auditSummary = mockAuditSummary[auditId] || {};
-  const [comments, setComments] = useState('');
-  const [signature, setSignature] = useState(null);
+  const [assignment, setAssignment] = useState<Assignment | null>(null);
+  const [template, setTemplate] = useState<TemplateDetails | null>(null);
+  const [audit, setAudit] = useState<AuditResponseDto | null>(null);
+  const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [managerNotes, setManagerNotes] = useState('');
+  const [responses, setResponses] = useState<AuditResponse[]>([]);
   const [showConfirmation, setShowConfirmation] = useState(false);
   
-  const handleAddSignature = () => {
-    // In a real app, this would open a signature pad
-    setSignature(`https://api.a0.dev/assets/image?text=Store%20Manager%20Signature&aspect=3:1&seed=${Math.random()}`);
-    toast.success('Signature captured');
+  useEffect(() => {
+    loadAuditData();
+  }, [assignmentId || auditId]);
+
+  const loadAuditData = async () => {
+    try {
+      setLoading(true);
+      
+      if (!assignmentId && !auditId) {
+        Alert.alert('Error', 'No assignment or audit ID provided');
+        navigation.goBack();
+        return;
+      }
+
+      let assignmentData: Assignment;
+      let auditData: AuditResponseDto | null = null;
+
+      if (assignmentId) {
+        // Load assignment details
+        assignmentData = await authService.getAssignmentDetails(assignmentId);
+        setAssignment(assignmentData);
+      }
+
+      if (auditId) {
+        // Load audit details
+        auditData = await auditService.getAuditById(auditId);
+        setAudit(auditData);
+        
+        // Note: We need the assignmentId to be passed separately since it's not in AuditResponseDto
+        if (!assignmentId) {
+          Alert.alert('Error', 'Assignment ID is required when loading audit');
+          navigation.goBack();
+          return;
+        }
+      }
+
+      // Load template details
+      const templateId = auditData?.templateId || assignmentData!.templateId;
+      const templateData = await authService.getTemplateDetails(templateId);
+      setTemplate(templateData);
+
+      // Load existing audit responses if available
+      if (auditData && auditData.responses) {
+        // Convert audit responses to the format expected by the UI
+        const auditResponses: AuditResponse[] = [];
+        Object.keys(auditData.responses).forEach(questionId => {
+          const response = auditData.responses[questionId];
+          auditResponses.push({
+            questionId,
+            answer: response.answer,
+            notes: response.notes,
+            photos: response.photos || []
+          });
+        });
+        setResponses(auditResponses);
+      }
+      
+    } catch (error) {
+      console.error('Failed to load audit data:', error);
+      Alert.alert('Error', 'Failed to load audit data. Please try again.');
+      navigation.goBack();
+    } finally {
+      setLoading(false);
+    }
   };
-  
-  const handleClearSignature = () => {
-    setSignature(null);
-  };
-  
-  const handleSubmit = () => {
-    if (!signature) {
-      Alert.alert(
-        "Missing Signature",
-        "Please add a store manager signature before submitting",
-        [{ text: "OK" }]
-      );
+
+  const handleSubmit = async () => {
+    if (!assignment || !audit) {
+      Alert.alert('Error', 'Assignment or audit data not loaded');
       return;
     }
+
+    Alert.alert(
+      'Submit Audit',
+      'Are you sure you want to submit this audit? You will not be able to make changes after submission.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Submit', 
+          onPress: async () => {
+            setSubmitting(true);
+            try {
+              // Prepare responses in the format expected by the API
+              const formattedResponses: { [key: string]: any } = {};
+              responses.forEach(response => {
+                formattedResponses[response.questionId] = {
+                  answer: response.answer,
+                  notes: response.notes,
+                  photos: response.photos || []
+                };
+              });
+
+              // Create audit submission data
+              const submitData: SubmitAuditDto = {
+                auditId: audit.auditId,
+                responses: formattedResponses,
+                storeInfo: assignment.storeInfo ? JSON.parse(assignment.storeInfo) : null,
+                location: null, // Can be added if location is captured
+                media: null // Can be added if additional media is captured
+              };
+
+              // Submit audit
+              await auditService.submitAudit(audit.auditId, submitData);
+              
+              // Update assignment status to completed
+              await authService.updateAssignmentStatus(assignment.assignmentId, 'Completed');
+
+              // Clear any local progress data
+              await auditService.clearAuditProgress(audit.auditId);
+
+              Alert.alert(
+                'Success',
+                'Audit submitted successfully!',
+                [
+                  {
+                    text: 'OK',
+                    onPress: () => {
+                      // Navigate back to audit list
+                      (navigation as any).navigate('Home');
+                    }
+                  }
+                ]
+              );
+            } catch (error) {
+              console.error('Failed to submit audit:', error);
+              Alert.alert('Error', 'Failed to submit audit. Please try again.');
+            } finally {
+              setSubmitting(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const getStoreInfo = () => {
+    if (!assignment?.storeInfo) return null;
     
-    setShowConfirmation(true);
+    try {
+      return JSON.parse(assignment.storeInfo);
+    } catch {
+      return { name: assignment.storeInfo };
+    }
   };
-  
-  const handleConfirmSubmit = () => {
-    setSubmitting(true);
+
+  const formatDate = (dateString: string | null | undefined) => {
+    if (!dateString) return 'No due date';
     
-    // Simulate submission delay
-    setTimeout(() => {
-      setSubmitting(false);
-      toast.success('Audit submitted successfully');
-      navigation.navigate('Submitted');
-    }, 2000);
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    } catch {
+      return 'Invalid date';
+    }
   };
-  
-  const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { 
-      month: 'short', 
-      day: 'numeric',
-      year: 'numeric'
-    });
+
+  const calculateCompletionPercentage = () => {
+    if (!template?.questions.sections.length) return 0;
+    
+    // Get all questions from all sections
+    const allQuestions = template.questions.sections.reduce((acc, section) => 
+      acc.concat(section.questions), [] as any[]
+    );
+    
+    const requiredQuestions = allQuestions.filter(q => q.required);
+    const answeredRequired = responses.filter(r => 
+      requiredQuestions.some(q => q.id === r.questionId)
+    );
+    
+    return requiredQuestions.length > 0 ? Math.round((answeredRequired.length / requiredQuestions.length) * 100) : 100;
   };
-  
-  // Calculate section with lowest score
-  const lowestScoreSection = auditSummary.sections ? 
-    [...auditSummary.sections].sort((a, b) => a.score - b.score)[0] : null;
-  
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#0066CC" />
+          <Text style={styles.loadingText}>Loading audit data...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const storeInfo = getStoreInfo();
+  const completionPercentage = calculateCompletionPercentage();
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -139,193 +254,111 @@ export default function AuditSubmitScreen() {
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         {/* Store Info */}
         <View style={styles.storeCard}>
-          <Text style={styles.storeName}>{auditSummary.storeName}</Text>
+          <Text style={styles.storeName}>{storeInfo?.name || storeInfo?.storeName || 'Unknown Store'}</Text>
           
           <View style={styles.addressContainer}>
             <Ionicons name="location-outline" size={16} color="#6c757d" />
-            <Text style={styles.addressText}>{auditSummary.address}</Text>
+            <Text style={styles.addressText}>{storeInfo?.address || 'Unknown Address'}</Text>
           </View>
           
           <View style={styles.completedDateContainer}>
             <Ionicons name="calendar-outline" size={16} color="#6c757d" />
             <Text style={styles.completedDateText}>
-              Completed: {formatDate(auditSummary.completedDate)}
+              Due Date: {formatDate(assignment?.dueDate)}
             </Text>
           </View>
         </View>
         
-        {/* Overall Score */}
-        <View style={styles.scoreCard}>
-          <Text style={styles.scoreCardTitle}>Overall Score</Text>
+        {/* Completion Status */}
+        <View style={styles.completionCard}>
+          <Text style={styles.completionCardTitle}>Completion Status</Text>
           
-          <View style={styles.overallScoreContainer}>
-            <View style={[
-              styles.scoreCircle, 
-              { 
-                borderColor: auditSummary.overallScore >= 90 
-                  ? '#28a745' 
-                  : auditSummary.overallScore >= 70 
-                    ? '#ffc107' 
-                    : '#dc3545' 
-              }
-            ]}>
-              <Text style={[
-                styles.overallScoreText,
-                { 
-                  color: auditSummary.overallScore >= 90 
-                    ? '#28a745' 
-                    : auditSummary.overallScore >= 70 
-                      ? '#ffc107' 
-                      : '#dc3545' 
-                }
-              ]}>
-                {auditSummary.overallScore}%
-              </Text>
+          <View style={styles.completionContainer}>
+            <View style={styles.progressContainer}>
+              <View style={styles.progressInfo}>
+                <Text style={styles.progressLabel}>Required Questions</Text>
+                <Text style={styles.progressValue}>
+                  {responses.length} of {
+                    template?.questions.sections.reduce((acc, section) => 
+                      acc + section.questions.filter(q => q.required).length, 0
+                    ) || 0
+                  } completed
+                </Text>
+              </View>
+              <View style={styles.progressBarBackground}>
+                <View 
+                  style={[
+                    styles.progressBarFill,
+                    { width: `${completionPercentage}%` }
+                  ]}
+                />
+              </View>
+              <Text style={styles.progressPercentage}>{completionPercentage}%</Text>
             </View>
             
-            <View style={styles.scoreStatsContainer}>
-              <View style={styles.statItem}>
-                <Ionicons name="document-text-outline" size={20} color="#0066CC" />
-                <Text style={styles.statText}>
-                  {auditSummary.sections?.reduce((total, section) => total + section.questionCount, 0)} Questions
+            {completionPercentage < 100 && (
+              <View style={styles.warningContainer}>
+                <Ionicons name="warning-outline" size={20} color="#ffc107" />
+                <Text style={styles.warningText}>
+                  Some required questions are not answered. Please complete all required questions before submitting.
                 </Text>
               </View>
-              
-              <View style={styles.statItem}>
-                <Ionicons name="image-outline" size={20} color="#0066CC" />
-                <Text style={styles.statText}>
-                  {auditSummary.photoCount} Photos
-                </Text>
-              </View>
-              
-              <View style={styles.statItem}>
-                <Ionicons name="alert-circle-outline" size={20} color="#0066CC" />
-                <Text style={styles.statText}>
-                  {auditSummary.issuesCount} Issues
-                </Text>
-              </View>
-            </View>
+            )}
           </View>
         </View>
         
-        {/* Section Scores */}
-        <View style={styles.sectionsCard}>
-          <Text style={styles.sectionsCardTitle}>Section Scores</Text>
-          
-          {auditSummary.sections?.map((section) => (
-            <View key={section.id} style={styles.sectionScoreItem}>
-              <View style={styles.sectionScoreHeader}>
-                <Text style={styles.sectionTitle}>{section.title}</Text>
-                <View style={[
-                  styles.sectionScoreBadge,
-                  { 
-                    backgroundColor: section.score >= 90 
-                      ? '#28a745' 
-                      : section.score >= 70 
-                        ? '#ffc107' 
-                        : '#dc3545' 
-                  }
-                ]}>
-                  <Text style={styles.sectionScoreText}>{section.score}%</Text>
-                </View>
-              </View>
-              
-              <View style={styles.sectionProgressContainer}>
-                <View style={styles.progressBarBackground}>
-                  <View 
-                    style={[
-                      styles.progressBarFill, 
-                      { 
-                        width: `${section.score}%`,
-                        backgroundColor: section.score >= 90 
-                          ? '#28a745' 
-                          : section.score >= 70 
-                            ? '#ffc107' 
-                            : '#dc3545'
-                      }
-                    ]} 
-                  />
-                </View>
-                <Text style={styles.questionCountText}>
-                  {section.answeredCount}/{section.questionCount} questions
-                </Text>
-              </View>
-            </View>
-          ))}
-        </View>
-        
-        {/* Areas for Improvement */}
-        {lowestScoreSection && (
-          <View style={styles.improvementCard}>
-            <Text style={styles.improvementCardTitle}>Areas for Improvement</Text>
-            
-            <View style={styles.improvementItem}>
-              <Ionicons name="alert-circle" size={24} color="#dc3545" />
-              <View style={styles.improvementContent}>
-                <Text style={styles.improvementTitle}>
-                  {lowestScoreSection.title} ({lowestScoreSection.score}%)
-                </Text>
-                <Text style={styles.improvementText}>
-                  This section has the lowest score and needs attention.
-                </Text>
-              </View>
-            </View>
-          </View>
-        )}
-        
-        {/* Comments */}
-        <View style={styles.commentsCard}>
-          <Text style={styles.commentsCardTitle}>Additional Comments</Text>
+        {/* Additional Notes */}
+        <View style={styles.notesCard}>
+          <Text style={styles.notesCardTitle}>Additional Notes</Text>
           
           <TextInput
-            style={styles.commentsInput}
-            placeholder="Add any additional comments or observations..."
-            value={comments}
-            onChangeText={setComments}
+            style={styles.notesInput}
+            placeholder="Add any additional notes or observations..."
+            value={managerNotes}
+            onChangeText={setManagerNotes}
             multiline
-            textAlignVertical="top"
+            numberOfLines={4}
           />
         </View>
         
-        {/* Signature */}
-        <View style={styles.signatureCard}>
-          <Text style={styles.signatureCardTitle}>
-            Store Manager Signature
-            <Text style={styles.requiredIndicator}> *</Text>
-          </Text>
+        {/* Response Summary */}
+        <View style={styles.responseCard}>
+          <Text style={styles.responseCardTitle}>Response Summary</Text>
           
-          {signature ? (
-            <View style={styles.signatureContainer}>
-              <Image
-                source={{ uri: signature }}
-                style={styles.signatureImage}
-                resizeMode="contain"
-              />
-              <TouchableOpacity 
-                style={styles.clearSignatureButton}
-                onPress={handleClearSignature}
-              >
-                <Text style={styles.clearSignatureText}>Clear</Text>
-              </TouchableOpacity>
+          <View style={styles.statsContainer}>
+            <View style={styles.statItem}>
+              <Text style={styles.statValue}>{responses.length}</Text>
+              <Text style={styles.statLabel}>Answered</Text>
             </View>
-          ) : (
-            <TouchableOpacity 
-              style={styles.addSignatureButton}
-              onPress={handleAddSignature}
-            >
-              <Ionicons name="create-outline" size={24} color="#0066CC" />
-              <Text style={styles.addSignatureText}>Tap to add signature</Text>
-            </TouchableOpacity>
-          )}
+            <View style={styles.statItem}>
+              <Text style={styles.statValue}>
+                {responses.filter(r => r.photos && r.photos.length > 0).length}
+              </Text>
+              <Text style={styles.statLabel}>With Photos</Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statValue}>
+                {responses.filter(r => r.notes && r.notes.length > 0).length}
+              </Text>
+              <Text style={styles.statLabel}>With Notes</Text>
+            </View>
+          </View>
         </View>
         
         {/* Submit Button */}
         <TouchableOpacity 
-          style={styles.submitButton}
+          style={[
+            styles.submitButton,
+            (completionPercentage < 100 || submitting) && styles.disabledButton
+          ]}
           onPress={handleSubmit}
-          disabled={submitting}
+          disabled={completionPercentage < 100 || submitting}
         >
-          <Text style={styles.submitButtonText}>Submit Audit</Text>
+          {submitting ? (
+            <ActivityIndicator size="small" color="white" />
+          ) : (
+            <Text style={styles.submitButtonText}>Submit Audit</Text>
+          )}
         </TouchableOpacity>
         
         <View style={styles.footer}>
@@ -353,14 +386,14 @@ export default function AuditSubmitScreen() {
                 <Text style={[
                   styles.modalScoreValue,
                   { 
-                    color: auditSummary.overallScore >= 90 
+                    color: completionPercentage >= 90 
                       ? '#28a745' 
-                      : auditSummary.overallScore >= 70 
+                      : completionPercentage >= 70 
                         ? '#ffc107' 
                         : '#dc3545' 
                   }
                 ]}>
-                  {auditSummary.overallScore}%
+                  {completionPercentage}%
                 </Text>
               </View>
             </View>
@@ -376,7 +409,7 @@ export default function AuditSubmitScreen() {
               
               <TouchableOpacity 
                 style={styles.modalConfirmButton}
-                onPress={handleConfirmSubmit}
+                onPress={handleSubmit}
                 disabled={submitting}
               >
                 {submitting ? (
@@ -397,6 +430,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f7fa',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#6c757d',
   },
   header: {
     flexDirection: 'row',
@@ -458,7 +501,7 @@ const styles = StyleSheet.create({
     color: '#6c757d',
     marginLeft: 4,
   },
-  scoreCard: {
+  completionCard: {
     backgroundColor: 'white',
     borderRadius: 12,
     marginHorizontal: 16,
@@ -470,143 +513,66 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 1,
   },
-  scoreCardTitle: {
+  completionCardTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#212529',
     marginBottom: 16,
   },
-  overallScoreContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  completionContainer: {
+    marginBottom: 16,
   },
-  scoreCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    borderWidth: 3,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 16,
-  },
-  overallScoreText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-  },
-  scoreStatsContainer: {
-    flex: 1,
-  },
-  statItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  progressContainer: {
     marginBottom: 8,
   },
-  statText: {
-    fontSize: 14,
-    color: '#212529',
-    marginLeft: 8,
-  },
-  sectionsCard: {
-    backgroundColor: 'white',
-    borderRadius: 12,
-    marginHorizontal: 16,
-    marginBottom: 16,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  sectionsCardTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#212529',
-    marginBottom: 16,
-  },
-  sectionScoreItem: {
-    marginBottom: 16,
-  },
-  sectionScoreHeader: {
+  progressInfo: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
   },
-  sectionTitle: {
+  progressLabel: {
     fontSize: 14,
     fontWeight: '500',
     color: '#212529',
   },
-  sectionScoreBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
-  },
-  sectionScoreText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: 'white',
-  },
-  sectionProgressContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  progressValue: {
+    fontSize: 14,
+    color: '#6c757d',
   },
   progressBarBackground: {
-    flex: 1,
     height: 8,
     backgroundColor: '#e9ecef',
     borderRadius: 4,
     overflow: 'hidden',
-    marginRight: 8,
+    marginBottom: 8,
   },
   progressBarFill: {
     height: '100%',
+    backgroundColor: '#0066CC',
     borderRadius: 4,
   },
-  questionCountText: {
-    fontSize: 12,
-    color: '#6c757d',
-    width: 80,
-    textAlign: 'right',
-  },
-  improvementCard: {
-    backgroundColor: 'white',
-    borderRadius: 12,
-    marginHorizontal: 16,
-    marginBottom: 16,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  improvementCardTitle: {
+  progressPercentage: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#212529',
-    marginBottom: 16,
+    color: '#0066CC',
+    textAlign: 'center',
   },
-  improvementItem: {
+  warningContainer: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    backgroundColor: '#fff3cd',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 12,
   },
-  improvementContent: {
+  warningText: {
+    fontSize: 14,
+    color: '#856404',
+    marginLeft: 8,
     flex: 1,
-    marginLeft: 12,
   },
-  improvementTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#212529',
-    marginBottom: 4,
-  },
-  improvementText: {
-    fontSize: 14,
-    color: '#6c757d',
-  },
-  commentsCard: {
+  notesCard: {
     backgroundColor: 'white',
     borderRadius: 12,
     marginHorizontal: 16,
@@ -618,13 +584,13 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 1,
   },
-  commentsCardTitle: {
+  notesCardTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#212529',
     marginBottom: 16,
   },
-  commentsInput: {
+  notesInput: {
     borderWidth: 1,
     borderColor: '#ced4da',
     borderRadius: 8,
@@ -632,8 +598,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#212529',
     minHeight: 100,
+    textAlignVertical: 'top',
   },
-  signatureCard: {
+  responseCard: {
     backgroundColor: 'white',
     borderRadius: 12,
     marginHorizontal: 16,
@@ -645,55 +612,28 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 1,
   },
-  signatureCardTitle: {
+  responseCardTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#212529',
     marginBottom: 16,
   },
-  requiredIndicator: {
-    color: '#dc3545',
-  },
-  signatureContainer: {
-    position: 'relative',
-  },
-  signatureImage: {
-    width: '100%',
-    height: 100,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ced4da',
-  },
-  clearSignatureButton: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 16,
-  },
-  clearSignatureText: {
-    color: 'white',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  addSignatureButton: {
+  statsContainer: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f8f9fa',
-    borderWidth: 1,
-    borderColor: '#ced4da',
-    borderRadius: 8,
-    padding: 16,
-    borderStyle: 'dashed',
+    justifyContent: 'space-around',
   },
-  addSignatureText: {
-    marginLeft: 8,
-    fontSize: 16,
+  statItem: {
+    alignItems: 'center',
+  },
+  statValue: {
+    fontSize: 24,
+    fontWeight: '600',
     color: '#0066CC',
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#6c757d',
+    marginTop: 4,
   },
   submitButton: {
     backgroundColor: '#0066CC',
@@ -702,6 +642,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginHorizontal: 16,
     marginBottom: 16,
+  },
+  disabledButton: {
+    backgroundColor: '#6c757d',
   },
   submitButtonText: {
     color: 'white',
