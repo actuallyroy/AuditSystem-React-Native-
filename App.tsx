@@ -1,3 +1,4 @@
+import React from 'react';
 import 'react-native-reanimated';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -5,6 +6,8 @@ import { StyleSheet, View, ActivityIndicator } from 'react-native';
 import { SafeAreaProvider } from "react-native-safe-area-context"
 import { Toaster } from 'sonner-native';
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
+import { NotificationProvider } from "./contexts/NotificationContext";
+import { backgroundSyncService } from "./services/BackgroundSyncService";
 import HomeScreen from "./screens/HomeScreen"
 import AuditDetailScreen from "./screens/AuditDetailScreen";
 import AuditExecutionScreen from "./screens/AuditExecutionScreen";
@@ -16,6 +19,8 @@ import ResetPasswordScreen from "./screens/ResetPasswordScreen";
 import VerifyEmailScreen from "./screens/VerifyEmailScreen";
 import DebugScreen from "./screens/DebugScreen";
 import ApiTestScreen from "./screens/ApiTestScreen";
+import NotificationScreen from "./screens/NotificationScreen";
+import { NotificationTestScreen } from "./screens/NotificationTestScreen";
 
 const Stack = createNativeStackNavigator();
 
@@ -42,6 +47,8 @@ function MainStack(): JSX.Element {
       <Stack.Screen name="AuditDetail" component={AuditDetailScreen} />
       <Stack.Screen name="AuditExecution" component={AuditExecutionScreen} />
       <Stack.Screen name="AuditSubmit" component={AuditSubmitScreen} />
+      <Stack.Screen name="Notifications" component={NotificationScreen} />
+      <Stack.Screen name="NotificationTest" component={NotificationTestScreen} />
       <Stack.Screen name="Debug" component={DebugScreen} />
       <Stack.Screen name="ApiTest" component={ApiTestScreen} />
     </Stack.Navigator>
@@ -50,6 +57,20 @@ function MainStack(): JSX.Element {
 
 function RootNavigator(): JSX.Element {
   const { isAuthenticated, loading } = useAuth();
+
+  // Start background sync service when authenticated
+  React.useEffect(() => {
+    if (isAuthenticated) {
+      backgroundSyncService.startPeriodicSync();
+    } else {
+      backgroundSyncService.stopPeriodicSync();
+    }
+
+    // Cleanup on unmount
+    return () => {
+      backgroundSyncService.cleanup();
+    };
+  }, [isAuthenticated]);
 
   if (loading) {
     return (
@@ -66,10 +87,12 @@ export default function App(): JSX.Element {
   return (
     <SafeAreaProvider style={styles.container}>
       <AuthProvider>
-        <Toaster />
-        <NavigationContainer>
-          <RootNavigator />
-        </NavigationContainer>
+        <NotificationProvider>
+          <Toaster />
+          <NavigationContainer>
+            <RootNavigator />
+          </NavigationContainer>
+        </NotificationProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );

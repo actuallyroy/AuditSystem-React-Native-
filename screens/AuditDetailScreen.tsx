@@ -76,9 +76,28 @@ export default function AuditDetailScreen() {
     }
   };
 
-  const handleStartAudit = () => {
-    const targetId = assignmentId || auditId;
-    (navigation as any).navigate('AuditExecution', { assignmentId: targetId });
+  const handleStartAudit = async () => {
+    // Try to find in-progress audit for this assignment
+    let auditIdToPass = auditId;
+    if (assignmentId && !auditId) {
+      try {
+        const audits = await auditService.getAllAudits();
+        const inProgressAudit = audits.find(audit => 
+          audit.assignmentId === assignmentId && 
+          audit.status !== 'Submitted'
+        );
+        if (inProgressAudit) {
+          auditIdToPass = inProgressAudit.auditId;
+        }
+      } catch (e) {
+        // fallback: ignore error, just pass assignmentId
+      }
+    }
+    if (auditIdToPass) {
+      (navigation as any).navigate('AuditExecution', { assignmentId: assignmentId || auditIdToPass, auditId: auditIdToPass });
+    } else {
+      (navigation as any).navigate('AuditExecution', { assignmentId: assignmentId || auditId });
+    }
   };
 
   const getStoreInfo = () => {
@@ -159,6 +178,7 @@ export default function AuditDetailScreen() {
   if (assignment) {
     const storeInfo = getStoreInfo();
     const daysRemaining = getDaysRemaining();
+    const isFulfilled = assignment.status === 'Completed' || assignment.status === 'Submitted';
 
     return (
       <SafeAreaView style={styles.container}>
@@ -297,18 +317,22 @@ export default function AuditDetailScreen() {
           <TouchableOpacity 
             style={[
               styles.startAuditButton,
-              assignment?.status === 'Completed' && styles.disabledButton
+              isFulfilled && styles.disabledButton
             ]}
-            onPress={handleStartAudit}
-            disabled={assignment?.status === 'Completed'}
+            onPress={() => {
+              if (!isFulfilled && assignment.assignmentId) {
+                (navigation as any).navigate('AuditExecution', { assignmentId: assignment.assignmentId });
+              }
+            }}
+            disabled={isFulfilled}
           >
             <Ionicons 
-              name={assignment?.status === 'Completed' ? "checkmark-circle" : "play-circle"} 
+              name={isFulfilled ? "checkmark-circle" : "play-circle"} 
               size={24} 
               color="white" 
             />
             <Text style={styles.startAuditButtonText}>
-              {assignment?.status === 'Completed' ? 'Audit Completed' : 'Start Audit'}
+              {isFulfilled ? 'Audit Fulfilled' : 'Start Audit'}
             </Text>
           </TouchableOpacity>
         </ScrollView>

@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '@react-navigation/native';
+import { backgroundSyncService } from '../services/BackgroundSyncService';
+import { auditService } from '../services/AuditService';
 
 export default function SettingsScreen() {
   const [syncOnCellular, setSyncOnCellular] = useState(false);
@@ -11,6 +13,7 @@ export default function SettingsScreen() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [darkModeEnabled, setDarkModeEnabled] = useState(false);
   const [biometricEnabled, setBiometricEnabled] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const { user, logout } = useAuth();
   const navigation = useNavigation();
 
@@ -55,7 +58,58 @@ export default function SettingsScreen() {
     );
   };
 
-  const renderSettingItem = (icon, title, description, value, onValueChange) => (
+  const handleCleanupInvalidData = async () => {
+    try {
+      const result = await auditService.cleanupInvalidAuditProgress();
+      
+      if (result.cleaned > 0) {
+        Alert.alert(
+          "Cleanup Complete", 
+          `Cleaned up ${result.cleaned} invalid audit progress entries.`
+        );
+      } else {
+        Alert.alert(
+          "Cleanup Complete", 
+          "No invalid audit progress data found."
+        );
+      }
+    } catch (error) {
+      console.error('Cleanup error:', error);
+      Alert.alert('Error', 'Failed to cleanup invalid data. Please try again.');
+    }
+  };
+
+  const handleManualSync = async () => {
+    setSyncing(true);
+    try {
+      const result = await backgroundSyncService.manualSync();
+      
+      if (result.success > 0 || result.completed > 0) {
+        const message = result.completed > 0 
+          ? `Successfully synced ${result.success} audits and submitted ${result.completed} completed audits`
+          : `Successfully synced ${result.success} audits`;
+        
+        Alert.alert('Sync Complete', message);
+      } else if (result.failed > 0) {
+        Alert.alert('Sync Issues', `Failed to sync ${result.failed} audits. Please try again.`);
+      } else {
+        Alert.alert('Sync Complete', 'No pending audits to sync.');
+      }
+    } catch (error) {
+      console.error('Manual sync error:', error);
+      Alert.alert('Sync Error', 'Failed to sync audits. Please check your connection and try again.');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const renderSettingItem = (
+    icon: keyof typeof Ionicons.glyphMap, 
+    title: string, 
+    description: string, 
+    value: boolean, 
+    onValueChange: (value: boolean) => void
+  ) => (
     <View style={styles.settingItem}>
       <View style={styles.settingIconContainer}>
         <Ionicons name={icon} size={24} color="#0066CC" />
@@ -114,9 +168,19 @@ export default function SettingsScreen() {
             setSyncOnCellular
           )}
           
-          <TouchableOpacity style={styles.actionButton} onPress={() => console.log("Sync now pressed")}>
-            <Ionicons name="sync-outline" size={20} color="#0066CC" />
-            <Text style={styles.actionButtonText}>Sync Now</Text>
+          <TouchableOpacity 
+            style={styles.actionButton} 
+            onPress={handleManualSync}
+            disabled={syncing}
+          >
+            {syncing ? (
+              <ActivityIndicator size="small" color="#0066CC" />
+            ) : (
+              <Ionicons name="sync-outline" size={20} color="#0066CC" />
+            )}
+            <Text style={styles.actionButtonText}>
+              {syncing ? 'Syncing...' : 'Sync Now'}
+            </Text>
           </TouchableOpacity>
           
           <View style={styles.syncInfoContainer}>
@@ -169,6 +233,11 @@ export default function SettingsScreen() {
           <TouchableOpacity style={styles.actionButton} onPress={handleClearCache}>
             <Ionicons name="trash-outline" size={20} color="#0066CC" />
             <Text style={styles.actionButtonText}>Clear Cache</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity style={styles.actionButton} onPress={handleCleanupInvalidData}>
+            <Ionicons name="refresh-outline" size={20} color="#0066CC" />
+            <Text style={styles.actionButtonText}>Cleanup Invalid Data</Text>
           </TouchableOpacity>
           
           <View style={styles.storageInfoContainer}>

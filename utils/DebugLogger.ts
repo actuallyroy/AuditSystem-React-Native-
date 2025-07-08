@@ -11,33 +11,51 @@ class DebugLogger {
   private logs: LogEntry[] = [];
   private maxLogs = 100;
   private showAlertsForErrors = true;
+  private logLevel: 'debug' | 'info' | 'warn' | 'error' = 'warn';
+
+  setLogLevel(level: 'debug' | 'info' | 'warn' | 'error') {
+    this.logLevel = level;
+  }
 
   log(message: string, data?: any) {
-    this.addLog('log', message, data);
-    console.log(message, data);
+    if (this.shouldLog('debug')) {
+      this.addLog('log', message, data);
+      console.log(message, data);
+    }
   }
 
   error(message: string, data?: any) {
-    this.addLog('error', message, data);
-    console.error(message, data);
-    
-    if (this.showAlertsForErrors) {
-      Alert.alert(
-        'Debug Error',
-        `${message}\n\nData: ${data ? JSON.stringify(data, null, 2) : 'None'}`,
-        [{ text: 'OK' }]
-      );
+    if (this.shouldLog('error')) {
+      this.addLog('error', message, data);
+      console.error(message, data);
+      
+      if (this.showAlertsForErrors) {
+        Alert.alert(
+          'Debug Error',
+          `${message}\n\nData: ${data ? JSON.stringify(data, null, 2) : 'None'}`,
+          [{ text: 'OK' }]
+        );
+      }
     }
   }
 
   warn(message: string, data?: any) {
-    this.addLog('warn', message, data);
-    console.warn(message, data);
+    if (this.shouldLog('warn')) {
+      this.addLog('warn', message, data);
+      console.warn(message, data);
+    }
   }
 
   info(message: string, data?: any) {
-    this.addLog('info', message, data);
-    console.info(message, data);
+    if (this.shouldLog('info')) {
+      this.addLog('info', message, data);
+      console.info(message, data);
+    }
+  }
+
+  private shouldLog(level: 'debug' | 'info' | 'warn' | 'error'): boolean {
+    const levels = { debug: 0, info: 1, warn: 2, error: 3 };
+    return levels[level] >= levels[this.logLevel];
   }
 
   private addLog(level: 'log' | 'error' | 'warn' | 'info', message: string, data?: any) {

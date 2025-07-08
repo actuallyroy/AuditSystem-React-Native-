@@ -74,84 +74,194 @@ export default function AuditExecutionScreen() {
   // Dropdown states
   const [openDropdowns, setOpenDropdowns] = useState<{ [key: string]: boolean }>({});
   
+  // Auto-save timer
+  const [autoSaveTimer, setAutoSaveTimer] = useState<NodeJS.Timeout | null>(null);
+  
   // Load assignment and template data
   useEffect(() => {
+    // Clear all state when auditId or assignmentId changes
+    setAssignment(null);
+    setTemplate(null);
+    setAudit(null);
+    setQuestions([]);
+    setSections([]);
+    setCurrentSection('all');
+    setLoading(true);
+    
     loadAuditData();
-  }, [assignmentId]);
+  }, [auditId, assignmentId]);
+  
+  // Cleanup auto-save timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimer) {
+        clearTimeout(autoSaveTimer);
+      }
+    };
+  }, [autoSaveTimer]);
   
   const loadAuditData = async () => {
     try {
       setLoading(true);
+      console.log('Loading audit data for auditId:', auditId, 'assignmentId:', assignmentId);
       
-      if (!assignmentId) {
-        Alert.alert('Error', 'No assignment ID provided');
-        navigation.goBack();
-        return;
-      }
+      let auditData: AuditResponseDto | null = null;
+      let assignmentData: Assignment | null = null;
+      let templateData: TemplateDetails | null = null;
 
-      // Load assignment details
-      const assignmentData = await authService.getAssignmentDetails(assignmentId);
-      setAssignment(assignmentData);
-
-      // Load template with questions
-      const templateData = await authService.getTemplateDetails(assignmentData.templateId);
-      setTemplate(templateData);
-
-      // Create or load existing audit
-      let auditData: AuditResponseDto;
-      
       if (auditId) {
-        // Load existing audit by ID
-        auditData = await auditService.getAuditById(auditId);
-      } else {
-        // Try to find existing audit for this assignment first
-        console.log('No auditId provided, searching for existing audit for assignment:', assignmentId);
-        
+        // Load by auditId (preferred)
+        console.log('Loading audit by auditId:', auditId);
         try {
-          // Try to find existing audit for this assignment
+          auditData = await auditService.getAuditById(auditId);
+          console.log('Loaded audit data:', auditData.auditId, 'assignmentId:', auditData.assignmentId);
+          setAudit(auditData);
+          
+          // Verify we got the correct audit
+          if (auditData.auditId !== auditId) {
+            throw new Error(`Loaded wrong audit. Expected: ${auditId}, Got: ${auditData.auditId}`);
+          }
+        } catch (error) {
+          console.error('Failed to load audit by ID:', error);
+          // If loading by auditId fails, try to create a new audit if we have assignmentId
+          if (assignmentId) {
+            console.log('Attempting to create new audit for assignment:', assignmentId);
+            // Continue with assignment-based creation below
+          } else {
+            throw error; // Re-throw if we don't have assignmentId to fall back to
+          }
+        }
+        
+        if (auditData && auditData.assignmentId) {
+          assignmentData = await authService.getAssignmentDetails(auditData.assignmentId);
+          setAssignment(assignmentData);
+          templateData = await authService.getTemplateDetails(assignmentData.templateId);
+          setTemplate(templateData);
+        } else if (assignmentId) {
+          assignmentData = await authService.getAssignmentDetails(assignmentId);
+          setAssignment(assignmentData);
+          templateData = await authService.getTemplateDetails(assignmentData.templateId);
+          setTemplate(templateData);
+        }
+      } else if (assignmentId) {
+        // Load assignment details
+        assignmentData = await authService.getAssignmentDetails(assignmentId);
+        setAssignment(assignmentData);
+        console.log("Assignment Data: ", assignmentData);
+        
+        // Load template with questions
+        templateData = await authService.getTemplateDetails(assignmentData.templateId);
+        setTemplate(templateData);
+        
+        // If we don't have auditData yet (from failed auditId load), create a new audit
+        if (!auditData) {
+          // Try to find existing audit for this assignment first
+          try {
+            if (!user?.userId) {
+              throw new Error('User not authenticated');
+            }
+            const existingAudit = await auditService.findExistingAuditForAssignment(
+              assignmentData.templateId, 
+              user.userId,
+              assignmentId
+            );
+            if (existingAudit) {
+              console.log('Found existing audit for assignment:', existingAudit.auditId);
+              auditData = await auditService.getAuditById(existingAudit.auditId);
+              console.log('Loaded existing audit:', auditData.auditId);
+            } else {
+              // Create new audit
+              console.log('Creating new audit for assignment:', assignmentId);
+              const createAuditData: CreateAuditDto = {
+                templateId: assignmentData.templateId,
+                assignmentId: assignmentId,
+                storeInfo: assignmentData.storeInfo ? JSON.parse(assignmentData.storeInfo) : null,
+                location: null
+              };
+              console.log('Create audit data:', createAuditData);
+              auditData = await auditService.createAudit(createAuditData);
+              console.log('Created new audit:', auditData.auditId, 'Assignment ID in response:', auditData.assignmentId);
+            }
+          } catch (error) {
+            // Create new audit as fallback
+            const createAuditData: CreateAuditDto = {
+              templateId: assignmentData.templateId,
+              assignmentId: assignmentId,
+              storeInfo: assignmentData.storeInfo ? JSON.parse(assignmentData.storeInfo) : null,
+              location: null
+            };
+            auditData = await auditService.createAudit(createAuditData);
+          }
+          setAudit(auditData);
+        }
+      } else if (assignmentId) {
+        // Load assignment details
+        assignmentData = await authService.getAssignmentDetails(assignmentId);
+        setAssignment(assignmentData);
+        // Load template with questions
+        templateData = await authService.getTemplateDetails(assignmentData.templateId);
+        setTemplate(templateData);
+        // Try to find existing audit for this assignment first
+        try {
           if (!user?.userId) {
             throw new Error('User not authenticated');
           }
-          
           const existingAudit = await auditService.findExistingAuditForAssignment(
             assignmentData.templateId, 
             user.userId,
             assignmentId
           );
-          
           if (existingAudit) {
-            console.log('Found existing audit:', existingAudit.auditId);
+            console.log('Found existing audit for assignment:', existingAudit.auditId);
             auditData = await auditService.getAuditById(existingAudit.auditId);
+            console.log('Loaded existing audit:', auditData.auditId);
           } else {
-            console.log('No existing audit found, creating new one');
             // Create new audit
+            console.log('Creating new audit for assignment:', assignmentId);
             const createAuditData: CreateAuditDto = {
               templateId: assignmentData.templateId,
               assignmentId: assignmentId,
               storeInfo: assignmentData.storeInfo ? JSON.parse(assignmentData.storeInfo) : null,
-              location: null // Will be set when location is captured
+              location: null
             };
-            
+            console.log('Create audit data:', createAuditData);
             auditData = await auditService.createAudit(createAuditData);
+            console.log('Created new audit:', auditData.auditId, 'Assignment ID in response:', auditData.assignmentId);
           }
         } catch (error) {
-          console.log('Error finding existing audit, creating new one:', error);
           // Create new audit as fallback
           const createAuditData: CreateAuditDto = {
             templateId: assignmentData.templateId,
             assignmentId: assignmentId,
             storeInfo: assignmentData.storeInfo ? JSON.parse(assignmentData.storeInfo) : null,
-            location: null // Will be set when location is captured
+            location: null
           };
-          
           auditData = await auditService.createAudit(createAuditData);
         }
+        setAudit(auditData);
+        
+        // Final verification - ensure we have the correct audit data
+        if (auditData) {
+          console.log('Final audit verification - auditId:', auditData.auditId, 'assignmentId:', auditData.assignmentId);
+          if (auditId && auditData.auditId !== auditId) {
+            throw new Error(`Final verification failed. Expected auditId: ${auditId}, Got: ${auditData.auditId}`);
+          }
+          if (assignmentId && auditData.assignmentId !== assignmentId) {
+            console.warn(`Assignment ID mismatch. Expected: ${assignmentId}, Got: ${auditData.assignmentId}`);
+          }
+        }
+      } else {
+        Alert.alert('Error', 'No assignment or audit ID provided');
+        navigation.goBack();
+        return;
       }
-      
-      setAudit(auditData);
 
       // Flatten questions from all sections and initialize with answer fields
       const allQuestions: QuestionWithAnswer[] = [];
+      
+      if (!templateData) {
+        throw new Error('Template data not found');
+      }
       
       templateData.questions.sections.forEach((section, sectionIndex) => {
         section.questions.forEach((question) => {
@@ -167,6 +277,10 @@ export default function AuditExecutionScreen() {
       });
 
       // Load existing progress if available
+      if (!auditData) {
+        throw new Error('No audit data available');
+      }
+      
       console.log('Loading progress for audit:', auditData.auditId);
       console.log('Server responses:', auditData.responses);
       
@@ -214,7 +328,7 @@ export default function AuditExecutionScreen() {
       setCurrentSection(sectionId || (sectionTitles.length > 1 ? sectionTitles[1] : 'All'));
 
       // Update assignment status to "In Progress" if it's still "Assigned"
-      if (assignmentData.status === 'Assigned') {
+      if (assignmentData && assignmentData.status === 'Assigned' && assignmentId) {
         await authService.updateAssignmentStatus(assignmentId, 'In Progress');
       }
 
@@ -292,12 +406,14 @@ export default function AuditExecutionScreen() {
         media: null // Will be updated when media is captured
       };
 
-      await auditService.saveAuditProgress(audit.auditId, progressData);
-      Alert.alert('Success', 'Progress saved successfully');
+      const result = await auditService.saveAuditProgress(audit.auditId, progressData, false);
+      
+      // The notification service will handle user feedback automatically
+      // No need to show additional alerts as notifications will be sent
       
     } catch (error) {
       console.error('Failed to save progress:', error);
-      Alert.alert('Error', 'Failed to save progress. Changes will be saved locally.');
+      Alert.alert('Error', 'Failed to save progress. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -312,32 +428,16 @@ export default function AuditExecutionScreen() {
     );
     
     if (hasUnsavedChanges) {
-      Alert.alert(
-        "Unsaved Changes",
-        "You have unsaved changes. Do you want to save before changing sections?",
-        [
-          {
-            text: "Don't Save",
-            onPress: () => {
-              setCurrentSection(newSection);
-              setShowSectionList(false);
-            },
-            style: "destructive"
-          },
-          {
-            text: "Save",
-            onPress: async () => {
-              await handleSaveProgress();
-              setCurrentSection(newSection);
-              setShowSectionList(false);
-            }
-          },
-          {
-            text: "Cancel",
-            style: "cancel"
-          }
-        ]
-      );
+      // Automatically save progress when moving between sections
+      handleSaveProgress().then(() => {
+        setCurrentSection(newSection);
+        setShowSectionList(false);
+      }).catch((error) => {
+        console.error('Failed to save progress when changing sections:', error);
+        // Still change section even if save fails
+        setCurrentSection(newSection);
+        setShowSectionList(false);
+      });
     } else {
       setCurrentSection(newSection);
       setShowSectionList(false);
@@ -350,6 +450,28 @@ export default function AuditExecutionScreen() {
         q.id === questionId ? { ...q, answer: value } : q
       )
     );
+    
+    // Auto-save after 2 seconds of inactivity
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer);
+    }
+    
+    const timer = setTimeout(() => {
+      if (audit) {
+        // Only auto-save if there are actual changes
+        const hasChanges = questions.some(q => 
+          q.answer !== null && q.answer !== '' && q.answer.length !== 0
+        );
+        
+        if (hasChanges) {
+          handleSaveProgress().catch(error => {
+            console.error('Auto-save failed:', error);
+          });
+        }
+      }
+    }, 2000);
+    
+    setAutoSaveTimer(timer);
   };
   
   const handleNotesChange = (questionId: string, value: string) => {
@@ -500,10 +622,44 @@ export default function AuditExecutionScreen() {
   const handleCompleteSection = async () => {
     const sectionQuestions = getCurrentSectionQuestions();
     
+    // Type-aware validation for required questions
+    const isQuestionAnswered = (q: QuestionWithAnswer) => {
+      switch (q.type.toLowerCase()) {
+        case 'singlechoice':
+        case 'dropdown':
+        case 'radio':
+          return q.answer !== null && q.answer !== '';
+        case 'multiplechoice':
+        case 'checkbox':
+          return Array.isArray(q.answer) && q.answer.length > 0;
+        case 'text':
+        case 'textarea':
+        case 'number':
+        case 'numeric':
+        case 'phone':
+        case 'email':
+          return typeof q.answer === 'string' && q.answer.trim() !== '';
+        case 'fileupload':
+        case 'image':
+          return Array.isArray(q.answer) && q.answer.length > 0;
+        case 'date':
+        case 'time':
+        case 'date_time':
+          return q.answer !== null && q.answer !== '';
+        case 'location':
+        case 'gps':
+          return q.answer !== null;
+        case 'barcode':
+          return typeof q.answer === 'string' && q.answer.trim() !== '';
+        case 'signature':
+          return q.answer !== null;
+        default:
+          return !!q.answer;
+      }
+    };
+
     // Check for required questions
-    const unansweredRequired = sectionQuestions.filter(q => 
-      q.required && (q.answer === null || q.answer === '' || (Array.isArray(q.answer) && q.answer.length === 0))
-    );
+    const unansweredRequired = sectionQuestions.filter(q => q.required && !isQuestionAnswered(q));
     
     if (unansweredRequired.length > 0) {
       Alert.alert(
@@ -514,35 +670,58 @@ export default function AuditExecutionScreen() {
       return;
     }
     
-    // Save progress
-    await handleSaveProgress();
-    
     // Check if all questions are completed
     const allAnswered = questions.every(q => 
       !q.required || (q.answer !== null && q.answer !== '' && (!Array.isArray(q.answer) || q.answer.length > 0))
     );
 
     if (allAnswered) {
-      // All questions complete
-      Alert.alert(
-        "Audit Complete",
-        "All questions have been completed. Would you like to submit the audit now?",
-        [
-          {
-            text: "Later",
-            onPress: () => navigation.goBack(),
-            style: "cancel"
-          },
-          {
-            text: "Submit",
-            onPress: () => (navigation as any).navigate('AuditSubmit', { 
-              assignmentId, 
-              auditId: audit?.auditId 
-            })
+      // All questions complete - save as completed audit
+      setSaving(true);
+      try {
+        if (!audit) {
+          Alert.alert('Error', 'No audit found to save progress');
+          return;
+        }
+
+        // Prepare audit responses
+        const responses: { [key: string]: any } = {};
+        questions.forEach(q => {
+          if (q.answer !== null && q.answer !== '' && (!Array.isArray(q.answer) || q.answer.length > 0)) {
+            responses[q.id] = {
+              answer: q.answer,
+              notes: q.notes || undefined,
+              photos: q.photos.length > 0 ? q.photos : undefined
+            };
           }
-        ]
-      );
+        });
+
+        const progressData: AuditProgressData = {
+          auditId: audit.auditId,
+          responses,
+          storeInfo: assignment?.storeInfo ? JSON.parse(assignment.storeInfo) : null,
+          location: null,
+          media: null,
+          completed: true // Mark as completed
+        };
+
+        const result = await auditService.saveAuditProgress(audit.auditId, progressData, true);
+        
+        // The notification service will handle user feedback automatically
+        // Navigate back after a short delay to allow notification to be processed
+        setTimeout(() => {
+          navigation.goBack();
+        }, 1000);
+      } catch (error) {
+        console.error('Failed to complete audit:', error);
+        Alert.alert('Error', 'Failed to complete audit. Please try again.');
+      } finally {
+        setSaving(false);
+      }
     } else {
+      // Save progress for current section
+      await handleSaveProgress();
+      
       // Move to next section or go back
       const currentSectionIndex = sections.indexOf(currentSection);
       if (currentSectionIndex < sections.length - 1) {
@@ -1049,7 +1228,7 @@ export default function AuditExecutionScreen() {
             
             <View style={styles.footer}>
               <Text style={styles.footerText}>
-                {saving ? 'Saving...' : 'Progress saved automatically'}
+                {saving ? 'Saving...' : 'Progress auto-saves every 2 seconds'}
               </Text>
             </View>
           </ScrollView>

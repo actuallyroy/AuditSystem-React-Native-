@@ -12,15 +12,27 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { debugLogger } from '../utils/DebugLogger';
 import { authService } from '../services/AuthService';
+import { backgroundSyncService } from '../services/BackgroundSyncService';
+import { networkService } from '../services/NetworkService';
 
 export default function DebugScreen({ navigation }: any) {
   const [logs, setLogs] = useState(debugLogger.getLogs());
   const [refreshing, setRefreshing] = useState(false);
+  const [syncStats, setSyncStats] = useState(backgroundSyncService.getStats());
+  const [networkInfo, setNetworkInfo] = useState<any>(null);
 
   useEffect(() => {
     const interval = setInterval(() => {
       setLogs(debugLogger.getLogs());
+      setSyncStats(backgroundSyncService.getStats());
     }, 1000);
+
+    // Load network info
+    const loadNetworkInfo = async () => {
+      const info = await networkService.getNetworkInfo();
+      setNetworkInfo(info);
+    };
+    loadNetworkInfo();
 
     return () => clearInterval(interval);
   }, []);
@@ -55,6 +67,16 @@ export default function DebugScreen({ navigation }: any) {
       debugLogger.log('Connection test result:', { isConnected });
     } catch (error) {
       debugLogger.error('Connection test failed:', error);
+    }
+  };
+
+  const triggerSync = async () => {
+    debugLogger.log('Manually triggering sync...');
+    try {
+      const result = await backgroundSyncService.triggerSync();
+      debugLogger.log('Manual sync result:', result);
+    } catch (error) {
+      debugLogger.error('Manual sync failed:', error);
     }
   };
 
@@ -97,6 +119,17 @@ export default function DebugScreen({ navigation }: any) {
           <Ionicons name="wifi-outline" size={16} color="#fff" />
           <Text style={styles.testButtonText}>Test API Connection</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={[styles.testButton, { marginTop: 8, backgroundColor: '#28a745' }]} onPress={triggerSync}>
+          <Ionicons name="sync-outline" size={16} color="#fff" />
+          <Text style={styles.testButtonText}>Trigger Sync</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.testButton, { marginTop: 8, backgroundColor: '#6f42c1' }]} 
+          onPress={() => navigation.navigate('NotificationTest' as never)}
+        >
+          <Ionicons name="notifications-outline" size={16} color="#fff" />
+          <Text style={styles.testButtonText}>Test Notifications</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.statsContainer}>
@@ -104,6 +137,17 @@ export default function DebugScreen({ navigation }: any) {
         <Text style={styles.statsText}>
           Errors: {logs.filter(log => log.level === 'error').length}
         </Text>
+        <Text style={styles.statsText}>
+          Sync Queue: {syncStats.queueSize}
+        </Text>
+        <Text style={styles.statsText}>
+          Sync Running: {syncStats.isRunning ? 'Yes' : 'No'}
+        </Text>
+        {networkInfo && (
+          <Text style={styles.statsText}>
+            Network: {networkInfo.isConnected ? 'Online' : 'Offline'} ({networkInfo.type})
+          </Text>
+        )}
       </View>
 
       <ScrollView

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { AuthResponse, authService, setTokenExpirationCallback } from '../services/AuthService';
 import { storageService } from '../services/StorageService';
 
+
 interface AuthContextType {
   isAuthenticated: boolean;
   user: AuthResponse | null;
@@ -63,6 +64,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await storageService.storeAuthData(authResponse);
       setUser(authResponse);
       setIsAuthenticated(true);
+      
+      // SignalR connection is handled by NotificationContext
     } catch (error) {
       throw error;
     }
@@ -89,6 +92,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const logout = async () => {
     try {
+      // SignalR disconnection is handled by NotificationContext
+      
       await storageService.clearAuthData();
       setUser(null);
       setIsAuthenticated(false);

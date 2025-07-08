@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, ScrollVi
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
+import { useNotifications } from '../contexts/NotificationContext';
 import { authService, Assignment } from '../services/AuthService';
 import { auditService, AuditSummaryDto } from '../services/AuditService';
 
@@ -12,7 +13,7 @@ type RootStackParamList = {
   AuditExecution: { auditId: string };
 };
 
-interface AuditItem {
+interface AssignmentItem {
   id: string;
   storeName: string;
   address: string;
@@ -23,7 +24,6 @@ interface AuditItem {
   templateName: string;
   templateCategory: string;
   notes?: string;
-  isInProgress?: boolean;
 }
 
 interface FilterButtonProps {
@@ -33,12 +33,13 @@ interface FilterButtonProps {
 }
 
 interface RenderItemProps {
-  item: AuditItem;
+  item: AssignmentItem;
 }
 
 export default function AuditListScreen() {
   const navigation = useNavigation();
   const { user } = useAuth();
+  const { unreadCount } = useNotifications();
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [audits, setAudits] = useState<AuditSummaryDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,21 +59,23 @@ export default function AuditListScreen() {
         return;
       }
 
-      console.log('Loading assignments for user:', user.userId);
+      // console.log('Loading assignments for user:', user.userId);
       console.log('User details:', { 
         username: user.username, 
         role: user.role, 
         firstName: user.firstName 
       });
 
-      const fetchedAssignments = await authService.getAssignmentsForUser(user.userId);
+      const [fetchedAssignments, fetchedAudits] = await Promise.all([
+        authService.getAssignmentsForUser(user.userId),
+        auditService.getAllAudits()
+      ]);
       setAssignments(fetchedAssignments);
-      console.log('Successfully loaded assignments:', fetchedAssignments.length);
-
-      // Also load audits for the user to check progress
-      const fetchedAudits = await auditService.getAllAudits();
       setAudits(fetchedAudits);
-      console.log('Successfully loaded audits:', fetchedAudits.length);
+      // console.log('Successfully loaded assignments:', fetchedAssignments.length);
+      // console.log('Assignment statuses:', fetchedAssignments.map(a => ({ id: a.assignmentId, status: a.status })));
+      console.log('Loaded audits:', fetchedAudits.length);
+
       
     } catch (error) {
       console.error('Failed to load assignments:', error);
@@ -119,8 +122,8 @@ export default function AuditListScreen() {
     await loadData();
   };
 
-  // Convert Assignment to AuditItem for UI compatibility
-  const convertAssignmentToAuditItem = (assignment: Assignment): AuditItem => {
+  // Convert Assignment to AssignmentItem for UI compatibility
+  const convertAssignmentToItem = (assignment: Assignment): AssignmentItem => {
     // Parse store info if it exists
     let storeName = 'Unknown Store';
     let address = 'Address not available';
@@ -136,10 +139,12 @@ export default function AuditListScreen() {
       }
     }
 
-    // Check if this assignment has any progress (in-progress audits)
-    const hasProgress = audits.some(audit => 
-      audit.assignmentId === assignment.assignmentId && 
-      audit.status !== 'Submitted'
+    // Find in-progress audit for this assignment
+    const inProgressAudit = audits.find(
+      audit =>
+        audit.assignmentId === assignment.assignmentId &&
+        audit.status !== 'Submitted' &&
+        audit.status !== 'Completed'
     );
 
     return {
@@ -149,27 +154,27 @@ export default function AuditListScreen() {
       address,
       dueDate: assignment.dueDate || new Date().toISOString(),
       priority: assignment.priority || 'Medium',
-      status: hasProgress ? 'In Progress' : assignment.status || 'Assigned',
+      status: inProgressAudit ? 'In Progress' : (assignment.status || 'pending'),
       templateName: assignment.template.name || 'Unknown Template',
       templateCategory: assignment.template.category || 'General',
       notes: assignment.notes || undefined,
-      isInProgress: hasProgress,
     };
   };
 
+  // Removed repetitive assignment logging
+
   // Filter items based on search query and filters
-  const filteredAudits = assignments
-    .map(convertAssignmentToAuditItem)
-    .filter(audit => {
-      // Exclude completed assignments
-      if (audit.status === 'Completed') return false;
-      const matchesSearch = audit.storeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                           audit.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                           audit.templateName.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesPriority = priorityFilter === 'All' || audit.priority === priorityFilter;
+  const filteredAssignments = assignments
+    .filter(assignment => assignment.status !== 'Completed')
+    .map(convertAssignmentToItem)
+    .filter(item => {
+      const matchesSearch = item.storeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           item.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                           item.templateName.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesPriority = priorityFilter === 'All' || item.priority === priorityFilter;
       // Due date filtering
       const today = new Date();
-      const dueDate = new Date(audit.dueDate);
+      const dueDate = new Date(item.dueDate);
       const timeDiff = dueDate.getTime() - today.getTime();
       const daysRemaining = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
       let matchesDue = true;
@@ -201,7 +206,7 @@ export default function AuditListScreen() {
     const daysRemaining = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
     
     // Determine status color
-    const statusColor = item.isInProgress ? '#ffc107' : '#0066CC';
+    const statusColor = '#0066CC';
     
     // Determine priority color
     let priorityColor: string;
@@ -269,11 +274,11 @@ export default function AuditListScreen() {
         <TouchableOpacity 
           style={styles.startButton}
           onPress={() => {
-            (navigation as any).navigate('AuditExecution', { assignmentId: item.assignmentId })
+            (navigation as any).navigate('AuditExecution', { assignmentId: item.assignmentId });
           }}
         >
           <Text style={styles.startButtonText}>
-            {item.isInProgress ? 'Continue Audit' : 'Start Audit'}
+            Start Audit
           </Text>
         </TouchableOpacity>
       </TouchableOpacity>
@@ -293,9 +298,24 @@ export default function AuditListScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>My Assignments</Text>
-        <TouchableOpacity style={styles.syncButton} onPress={handleRefresh}>
-          <Ionicons name="sync-outline" size={24} color="#0066CC" />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity 
+            style={styles.notificationButton} 
+            onPress={() => navigation.navigate('Notifications' as never)}
+          >
+            <Ionicons name="notifications-outline" size={24} color="#0066CC" />
+            {unreadCount > 0 && (
+              <View style={styles.notificationBadge}>
+                <Text style={styles.notificationBadgeText}>
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.syncButton} onPress={handleRefresh}>
+            <Ionicons name="sync-outline" size={24} color="#0066CC" />
+          </TouchableOpacity>
+        </View>
       </View>
       
       <View style={styles.searchContainer}>
@@ -358,7 +378,7 @@ export default function AuditListScreen() {
         </ScrollView>
       </View>
       
-      {filteredAudits.length === 0 ? (
+      {filteredAssignments.length === 0 ? (
         <View style={styles.emptyContainer}>
           <Ionicons name="clipboard-outline" size={48} color="#6c757d" />
           <Text style={styles.emptyTitle}>No assignments found</Text>
@@ -370,9 +390,9 @@ export default function AuditListScreen() {
         </View>
       ) : (
         <FlatList
-          data={filteredAudits}
+          data={filteredAssignments}
           renderItem={renderAuditItem}
-          keyExtractor={(item: AuditItem) => item.id}
+          keyExtractor={(item: AssignmentItem) => item.id}
           contentContainerStyle={styles.listContainer}
           showsVerticalScrollIndicator={false}
           refreshing={refreshing}
@@ -423,6 +443,32 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     color: '#212529',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  notificationButton: {
+    padding: 8,
+    position: 'relative',
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: '#FF4444',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  notificationBadgeText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: 'bold',
   },
   syncButton: {
     padding: 8,

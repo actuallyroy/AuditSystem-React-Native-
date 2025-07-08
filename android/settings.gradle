@@ -21,7 +21,7 @@ extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
   }
 }
 
-rootProject.name = 'a0-project'
+rootProject.name = 'Retail Execution Audit System'
 
 dependencyResolutionManagement {
   versionCatalogs {

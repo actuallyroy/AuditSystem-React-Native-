@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { authService, Assignment } from '../services/AuthService';
-import { auditService, AuditSummaryDto } from '../services/AuditService';
+import { auditService, AuditSummaryDto, AuditResponseDto } from '../services/AuditService';
 
 interface InProgressItem {
   id: string;
@@ -47,23 +47,31 @@ export default function InProgressScreen() {
         auditService.getAllAudits()
       ]);
 
-      // Find assignments that have in-progress audits (not submitted)
-      const inProgressAssignments = assignments.filter(assignment => {
-        const hasInProgressAudit = audits.some(audit => 
-          audit.status !== 'Submitted'
+      // For each assignment, find a linked audit (in progress - synced, draft, or in progress)
+      const auditFetches = assignments.map(async assignment => {
+        const summary = audits.find(audit => 
+          audit.assignmentId === assignment.assignmentId &&
+          (audit.status === 'Synced' || 
+           audit.status === 'Draft' || 
+           audit.status === 'In Progress' ||
+           (audit.status !== 'Submitted' && audit.status !== 'Completed'))
         );
-        return hasInProgressAudit;
+        if (!summary) return null;
+        // Fetch full audit details
+        const fullAudit = await auditService.getAuditById(summary.auditId);
+        if (fullAudit.responses && Object.keys(fullAudit.responses).length > 0) {
+          return { assignment, audit: fullAudit };
+        }
+        return null;
       });
+      const assignmentAuditPairs = (await Promise.all(auditFetches)).filter(Boolean);
 
       // Convert to InProgressItem format
-      const inProgressData: InProgressItem[] = inProgressAssignments.map(assignment => {
-        // Find the associated audit (use the first non-submitted audit)
-        const audit = audits.find(a => a.status !== 'Submitted');
-        
+      const inProgressData: InProgressItem[] = assignmentAuditPairs.map(pair => {
+        const { assignment, audit } = pair as { assignment: Assignment; audit: AuditResponseDto };
         // Parse store info
         let storeName = 'Unknown Store';
         let address = 'Address not available';
-        
         if (assignment.storeInfo) {
           try {
             const storeData = JSON.parse(assignment.storeInfo);
@@ -73,32 +81,21 @@ export default function InProgressScreen() {
             storeName = assignment.storeInfo;
           }
         }
-
-        // Calculate completion percentage based on audit status
+        // Calculate completion percentage (optional: can be improved)
         let completionPercentage = 0;
         let completedSections = 0;
         let totalSections = 5; // Default section count
-
+        // You can improve this by using audit.responses and template info
         if (audit) {
-          // Simplified calculation based on audit status
-          if (audit.status === 'In Progress') {
-            completionPercentage = 50; // Assume 50% complete for in-progress audits
-            completedSections = 2;
-          } else if (audit.status === 'Assigned') {
-            completionPercentage = 0;
-            completedSections = 0;
-          } else {
-            completionPercentage = 75; // Assume 75% for other non-submitted statuses
-            completedSections = 4;
-          }
+          completionPercentage = 50; // Placeholder
+          completedSections = 2; // Placeholder
         }
-
         return {
-          id: audit?.auditId || assignment.assignmentId,
+          id: audit.auditId || assignment.assignmentId,
           assignmentId: assignment.assignmentId,
           storeName,
           address,
-          lastUpdated: audit?.createdAt || assignment.createdAt,
+          lastUpdated: audit.createdAt || assignment.createdAt,
           completionPercentage,
           sections: {
             total: totalSections,

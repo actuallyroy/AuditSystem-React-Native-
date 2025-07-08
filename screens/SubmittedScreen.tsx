@@ -50,20 +50,20 @@ export default function SubmittedScreen() {
       // Debug: Log all audit statuses to see what we're getting
       console.log('All audits:', allAudits.map(a => ({ id: a.auditId, status: a.status, templateName: a.templateName })));
       
-      // Filter for submitted audits - try broader filter first
+      // Filter for submitted audits - only show actually submitted audits
       const submittedAudits = allAudits.filter(audit => {
         // Log each audit status for debugging
         console.log(`Audit ${audit.auditId}: status = "${audit.status}"`);
         
-        // Check for various possible submitted statuses
-        return audit.status === 'Submitted' || 
+        // Check for various possible submitted statuses (exclude synced/draft)
+        return (audit.status === 'Submitted' || 
                audit.status === 'Approved' || 
                audit.status === 'Rejected' ||
                audit.status === 'submitted' ||
                audit.status === 'approved' ||
                audit.status === 'rejected' ||
                audit.status === 'COMPLETED' ||
-               audit.status === 'completed';
+               audit.status === 'completed');
       });
       
       console.log('Filtered submitted audits:', submittedAudits.length);

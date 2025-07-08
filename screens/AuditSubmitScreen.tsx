@@ -74,6 +74,14 @@ export default function AuditSubmitScreen() {
       if (auditId) {
         // Load audit details
         auditData = await auditService.getAuditById(auditId);
+        
+        // Filter out audits with "in_progress" status
+        if (auditData.status === 'in_progress') {
+          Alert.alert('Error', 'Cannot submit audit with "in_progress" status');
+          navigation.goBack();
+          return;
+        }
+        
         setAudit(auditData);
         
         // Note: We need the assignmentId to be passed separately since it's not in AuditResponseDto

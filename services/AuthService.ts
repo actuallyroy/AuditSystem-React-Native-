@@ -56,6 +56,7 @@ export interface AuthResponse {
   lastName: string;
   token: string;
   role: string;
+  organisationId?: string;
 }
 
 export interface UserDetails {
@@ -471,7 +472,7 @@ class AuthService {
       
       if (!response.ok) {
         const errorText = await response.text();
-        debugLogger.error('Get Assignments Error', `Status: ${response.status}, Body: ${errorText}`);
+        // debugLogger.error('Get Assignments Error', `Status: ${response.status}, Body: ${errorText}`);
         
         // If 403, test token validity
         if (response.status === 403) {
@@ -513,11 +514,11 @@ class AuthService {
           status: this.convertStatusToUi(assignment.status || 'pending')
         }));
 
-      debugLogger.log('Assignments Retrieved', `Found ${userAssignments.length} assignments for user out of ${allAssignments.length} total`);
+      // debugLogger.log('Assignments Retrieved', `Found ${userAssignments.length} assignments for user out of ${allAssignments.length} total`);
       return userAssignments;
 
     } catch (error) {
-      debugLogger.error('Get Assignments Error', error instanceof Error ? error.message : 'Unknown error');
+      // debugLogger.error('Get Assignments Error', error instanceof Error ? error.message : 'Unknown error');
       throw error;
     }
   }
