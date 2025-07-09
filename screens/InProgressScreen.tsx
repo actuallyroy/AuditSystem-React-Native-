@@ -51,10 +51,9 @@ export default function InProgressScreen() {
       const auditFetches = assignments.map(async assignment => {
         const summary = audits.find(audit => 
           audit.assignmentId === assignment.assignmentId &&
-          (audit.status === 'Synced' || 
-           audit.status === 'Draft' || 
-           audit.status === 'In Progress' ||
-           (audit.status !== 'Submitted' && audit.status !== 'Completed'))
+                  (audit.status === 'synced' ||
+         audit.status === 'in_progress' ||
+         (audit.status !== 'submitted' && audit.status !== 'approved' && audit.status !== 'rejected' && audit.status !== 'pending_review'))
         );
         if (!summary) return null;
         // Fetch full audit details

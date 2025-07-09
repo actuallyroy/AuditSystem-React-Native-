@@ -84,7 +84,7 @@ export default function AuditDetailScreen() {
         const audits = await auditService.getAllAudits();
         const inProgressAudit = audits.find(audit => 
           audit.assignmentId === assignmentId && 
-          audit.status !== 'Submitted'
+          audit.status !== 'submitted'
         );
         if (inProgressAudit) {
           auditIdToPass = inProgressAudit.auditId;
@@ -178,7 +178,7 @@ export default function AuditDetailScreen() {
   if (assignment) {
     const storeInfo = getStoreInfo();
     const daysRemaining = getDaysRemaining();
-    const isFulfilled = assignment.status === 'Completed' || assignment.status === 'Submitted';
+          const isFulfilled = assignment.status === 'fulfilled' || assignment.status === 'submitted';
 
     return (
       <SafeAreaView style={styles.container}>

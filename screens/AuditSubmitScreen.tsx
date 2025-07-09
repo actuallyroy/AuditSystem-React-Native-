@@ -158,10 +158,10 @@ export default function AuditSubmitScreen() {
               };
 
               // Submit audit
-              await auditService.submitAudit(audit.auditId, submitData);
+              await auditService.submitAudit(audit.auditId, submitData, true);
               
-              // Update assignment status to completed
-              await authService.updateAssignmentStatus(assignment.assignmentId, 'Completed');
+              // Update assignment status to fulfilled
+              await authService.updateAssignmentStatus(assignment.assignmentId, 'fulfilled');
 
               // Clear any local progress data
               await auditService.clearAuditProgress(audit.auditId);

@@ -327,9 +327,9 @@ export default function AuditExecutionScreen() {
       setSections(sectionTitles);
       setCurrentSection(sectionId || (sectionTitles.length > 1 ? sectionTitles[1] : 'All'));
 
-      // Update assignment status to "In Progress" if it's still "Assigned"
-      if (assignmentData && assignmentData.status === 'Assigned' && assignmentId) {
-        await authService.updateAssignmentStatus(assignmentId, 'In Progress');
+      // Update assignment status to "in_progress" if it's still "pending"
+      if (assignmentData && assignmentData.status === 'pending' && assignmentId) {
+        await authService.updateAssignmentStatus(assignmentId, 'in_progress');
       }
 
     } catch (error) {
@@ -706,6 +706,17 @@ export default function AuditExecutionScreen() {
         };
 
         const result = await auditService.saveAuditProgress(audit.auditId, progressData, true);
+        
+        // Update assignment status to "fulfilled" when audit is completed
+        if (assignment?.assignmentId) {
+          try {
+            await authService.updateAssignmentStatus(assignment.assignmentId, 'fulfilled');
+            console.log('Assignment status updated to fulfilled for assignment:', assignment.assignmentId);
+          } catch (error) {
+            console.error('Failed to update assignment status:', error);
+            // Don't block the completion flow if status update fails
+          }
+        }
         
         // The notification service will handle user feedback automatically
         // Navigate back after a short delay to allow notification to be processed

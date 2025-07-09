@@ -224,7 +224,7 @@ class BackgroundSyncService {
           
         case 'audit_complete':
           // Submit completed audit
-          await auditService.submitAudit(task.auditId, task.data);
+          await auditService.submitAudit(task.auditId, task.data, true);
           break;
           
         default:

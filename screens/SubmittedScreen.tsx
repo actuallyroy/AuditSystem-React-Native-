@@ -55,15 +55,11 @@ export default function SubmittedScreen() {
         // Log each audit status for debugging
         console.log(`Audit ${audit.auditId}: status = "${audit.status}"`);
         
-        // Check for various possible submitted statuses (exclude synced/draft)
-        return (audit.status === 'Submitted' || 
-               audit.status === 'Approved' || 
-               audit.status === 'Rejected' ||
-               audit.status === 'submitted' ||
-               audit.status === 'approved' ||
+        // Check for submitted statuses (exclude in_progress/synced)
+        return (audit.status === 'submitted' || 
+               audit.status === 'approved' || 
                audit.status === 'rejected' ||
-               audit.status === 'COMPLETED' ||
-               audit.status === 'completed');
+               audit.status === 'pending_review');
       });
       
       console.log('Filtered submitted audits:', submittedAudits.length);
@@ -82,14 +78,14 @@ export default function SubmittedScreen() {
 
         // Determine status for display
         let displayStatus = audit.status || 'Unknown';
-        if (audit.status && audit.status.toLowerCase() === 'submitted') {
+        if (audit.status === 'submitted') {
           displayStatus = 'Pending';
-        } else if (audit.status && audit.status.toLowerCase() === 'approved') {
+        } else if (audit.status === 'approved') {
           displayStatus = 'Approved';
-        } else if (audit.status && audit.status.toLowerCase() === 'rejected') {
+        } else if (audit.status === 'rejected') {
           displayStatus = 'Rejected';
-        } else if (audit.status && audit.status.toLowerCase() === 'completed') {
-          displayStatus = 'Completed';
+        } else if (audit.status === 'pending_review') {
+          displayStatus = 'Pending Review';
         }
 
         // Score: show N/A if 0 or missing
@@ -130,8 +126,11 @@ export default function SubmittedScreen() {
   const filteredAudits = submittedItems.filter(audit => {
     const matchesSearch = audit.storeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          audit.address.toLowerCase().includes(searchQuery.toLowerCase());
-    // Status filter: handle 'Pending' for both 'Submitted' and 'submitted'
-    const matchesStatus = statusFilter === 'All' || audit.status === statusFilter;
+    // Status filter: handle display status mapping
+    const matchesStatus = statusFilter === 'All' || 
+      (statusFilter === 'Pending' && audit.status === 'submitted') ||
+      (statusFilter === 'Pending Review' && audit.status === 'pending_review') ||
+      audit.status === statusFilter.toLowerCase();
     return matchesSearch && matchesStatus;
   });
 
@@ -158,13 +157,13 @@ export default function SubmittedScreen() {
         statusColor = '#ffc107';
         statusIcon = 'time';
         break;
+      case 'Pending Review':
+        statusColor = '#17a2b8';
+        statusIcon = 'eye';
+        break;
       case 'Rejected':
         statusColor = '#dc3545';
         statusIcon = 'close-circle';
-        break;
-      case 'Completed':
-        statusColor = '#17a2b8';
-        statusIcon = 'checkmark-done-circle';
         break;
       default:
         statusColor = '#6c757d';
@@ -294,9 +293,9 @@ export default function SubmittedScreen() {
             onPress={() => setStatusFilter('Rejected')} 
           />
           <FilterButton 
-            title="Completed" 
-            isActive={statusFilter === 'Completed'} 
-            onPress={() => setStatusFilter('Completed')} 
+            title="Pending Review" 
+            isActive={statusFilter === 'Pending Review'} 
+            onPress={() => setStatusFilter('Pending Review')} 
           />
         </ScrollView>
       </View>

@@ -143,8 +143,10 @@ export default function AuditListScreen() {
     const inProgressAudit = audits.find(
       audit =>
         audit.assignmentId === assignment.assignmentId &&
-        audit.status !== 'Submitted' &&
-        audit.status !== 'Completed'
+        audit.status !== 'submitted' &&
+        audit.status !== 'approved' &&
+        audit.status !== 'rejected' &&
+        audit.status !== 'pending_review'
     );
 
     return {
@@ -165,7 +167,7 @@ export default function AuditListScreen() {
 
   // Filter items based on search query and filters
   const filteredAssignments = assignments
-    .filter(assignment => assignment.status !== 'Completed')
+            .filter(assignment => assignment.status !== 'fulfilled')
     .map(convertAssignmentToItem)
     .filter(item => {
       const matchesSearch = item.storeName.toLowerCase().includes(searchQuery.toLowerCase()) ||

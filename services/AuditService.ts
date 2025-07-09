@@ -337,10 +337,9 @@ class AuditService {
       const existingAudit = userAudits.find(audit => 
         audit.templateId === templateId && 
         audit.assignmentId === assignmentId &&
-        (audit.status === 'Synced' || 
-         audit.status === 'Draft' || 
-         audit.status === 'In Progress' ||
-         (audit.status !== 'Submitted' && audit.status !== 'Completed'))
+        (audit.status === 'synced' || 
+         audit.status === 'in_progress' ||
+         (audit.status !== 'submitted' && audit.status !== 'approved' && audit.status !== 'rejected' && audit.status !== 'pending_review'))
       );
       
       if (existingAudit) {
@@ -406,7 +405,7 @@ class AuditService {
             location: auditData.location || {},
             responses: {},
             media: {},
-            status: "In Progress",
+            status: "in_progress",
             score: 0,
             criticalIssues: 0,
           };
@@ -438,7 +437,7 @@ class AuditService {
         templateVersion: 1,
         auditorId: await storageService.getUserId() || '',
         organisationId: '',
-        status: 'In Progress',
+        status: 'in_progress',
         startTime: new Date().toISOString(),
         endTime: null,
         storeInfo: auditData.storeInfo || null,
@@ -474,7 +473,7 @@ class AuditService {
           location: auditData.location || {},
           responses: {},
           media: {},
-          status: "In Progress",
+          status: "in_progress",
           score: 0,
           criticalIssues: 0,
         },
@@ -493,7 +492,7 @@ class AuditService {
   /**
    * Submit an audit (with offline support)
    */
-  async submitAudit(auditId: string, submitData: SubmitAuditDto): Promise<AuditResponseDto> {
+  async submitAudit(auditId: string, submitData: SubmitAuditDto, isCompleted: boolean = true): Promise<AuditResponseDto> {
     try {
       const isOnline = await this.isOnline();
       
@@ -537,11 +536,11 @@ class AuditService {
         throw new Error(`Audit ${auditId} not found in offline storage`);
       }
 
-      // Update offline audit
+      // Update offline audit - only set status to "Submitted" if audit is actually completed
       const updatedAudit = {
         ...offlineAudits[auditIndex],
-        status: 'Submitted',
-        endTime: new Date().toISOString(),
+        status: isCompleted ? 'submitted' : offlineAudits[auditIndex].status, // Only change status if completed
+        endTime: isCompleted ? new Date().toISOString() : offlineAudits[auditIndex].endTime, // Only set endTime if completed
         responses: submitData.responses,
         media: submitData.media,
         storeInfo: submitData.storeInfo,
@@ -561,7 +560,7 @@ class AuditService {
         priority: 'HIGH',
       });
 
-      debugLog('Audit Submitted Offline', `Audit ID: ${auditId}, Status: ${updatedAudit.status}`);
+      debugLog('Audit Submitted Offline', `Audit ID: ${auditId}, Status: ${updatedAudit.status}, Completed: ${isCompleted}`);
       return updatedAudit;
     } catch (error) {
       debugError('Submit Audit Error', error instanceof Error ? error.message : 'Unknown error');
@@ -699,7 +698,7 @@ class AuditService {
               media: progressData.media,
               storeInfo: progressData.storeInfo,
               location: progressData.location
-            });
+            }, true); // Pass isCompleted = true for actual submission
             debugLog('Audit Submitted to Server', `Audit ID: ${auditId}`);
             
             // Audit completed successfully
@@ -914,7 +913,7 @@ class AuditService {
                 media: progressData.media,
                 storeInfo: progressData.storeInfo,
                 location: progressData.location
-              });
+              }, true);
               completed++;
               debugLog(`Successfully submitted audit ${auditId}`);
             } else {
