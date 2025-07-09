@@ -28,7 +28,7 @@ The `android/app/src/main/res/xml/network_security_config.xml` file is configure
         <domain includeSubdomains="true">192.168.1.4</domain>
         <domain includeSubdomains="true">localhost</domain>
         <domain includeSubdomains="true">test.scorptech.co</domain>
-        <domain includeSubdomains="true">10.0.2.2</domain>
+        <domain includeSubdomains="true">192.168.1.4</domain>
         <domain includeSubdomains="true">10.0.3.2</domain>
     </domain-config>
     <base-config cleartextTrafficPermitted="true">

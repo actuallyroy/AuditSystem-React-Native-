@@ -12,7 +12,9 @@ import {
 import { useNotifications } from '../contexts/NotificationContext';
 import { useAuth } from '../contexts/AuthContext';
 import { debugLogger } from '../utils/DebugLogger';
-import SignalRService from '../services/SignalRService';
+import WebSocketNotificationService from '../services/WebSocketNotificationService';
+import { storageService } from '../services/StorageService';
+import { networkService } from '../services/NetworkService';
 
 const logger = debugLogger;
 
@@ -24,6 +26,8 @@ export const NotificationTestScreen: React.FC = () => {
   const [connectionStats, setConnectionStats] = useState<any>(null);
   const [isTestingConnectivity, setIsTestingConnectivity] = useState(false);
   const [connectivityTestResult, setConnectivityTestResult] = useState<any>(null);
+  const [isTestingNetwork, setIsTestingNetwork] = useState(false);
+  const [networkTestResult, setNetworkTestResult] = useState<any>(null);
 
   // Update connection stats periodically
   useEffect(() => {
@@ -50,7 +54,9 @@ export const NotificationTestScreen: React.FC = () => {
   const handleTestConnectivity = async () => {
     setIsTestingConnectivity(true);
     try {
-      const result = await SignalRService.testWebSocketConnectivity();
+      // Get the current auth token for testing
+      const token = await storageService.getAuthToken();
+      const result = await WebSocketNotificationService.testWebSocketConnectivity(token || undefined);
       setConnectivityTestResult(result);
       
       if (result.success) {
@@ -63,6 +69,32 @@ export const NotificationTestScreen: React.FC = () => {
       logger.error('Connectivity test failed', error);
     } finally {
       setIsTestingConnectivity(false);
+    }
+  };
+
+  const handleTestNetwork = async () => {
+    setIsTestingNetwork(true);
+    try {
+      // Test emulator host IP first, then remote domain
+      let result = await networkService.testWebSocketServerConnectivity('192.168.1.4');
+      
+      if (!result.success) {
+        // Try remote domain as fallback
+        result = await networkService.testWebSocketServerConnectivity('test.scorptech.co');
+      }
+      
+      setNetworkTestResult(result);
+      
+      if (result.success) {
+        Alert.alert('Success', 'Network connectivity test passed!');
+      } else {
+        Alert.alert('Error', `Network connectivity test failed: ${result.error}`);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Network test failed');
+      logger.error('Network test failed', error);
+    } finally {
+      setIsTestingNetwork(false);
     }
   };
 
@@ -164,6 +196,18 @@ export const NotificationTestScreen: React.FC = () => {
           )}
         </TouchableOpacity>
 
+        <TouchableOpacity
+          style={[styles.button, styles.testButton]}
+          onPress={handleTestNetwork}
+          disabled={isTestingNetwork}
+        >
+          {isTestingNetwork ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>Test Network Connectivity</Text>
+          )}
+        </TouchableOpacity>
+
         {connectivityTestResult && (
           <View style={styles.testResultContainer}>
             <Text style={styles.testResultTitle}>Connectivity Test Result:</Text>
@@ -179,6 +223,31 @@ export const NotificationTestScreen: React.FC = () => {
             {connectivityTestResult.details && (
               <Text style={styles.testResultDetails}>
                 Details: {JSON.stringify(connectivityTestResult.details, null, 2)}
+              </Text>
+            )}
+            {connectivityTestResult.testedUrls && (
+              <Text style={styles.testResultDetails}>
+                Tested URLs: {connectivityTestResult.testedUrls.join(', ')}
+              </Text>
+            )}
+          </View>
+        )}
+
+        {networkTestResult && (
+          <View style={styles.testResultContainer}>
+            <Text style={styles.testResultTitle}>Network Test Result:</Text>
+            <Text style={[
+              styles.testResultText,
+              { color: networkTestResult.success ? '#4CAF50' : '#F44336' }
+            ]}>
+              {networkTestResult.success ? 'PASSED' : 'FAILED'}
+            </Text>
+            {networkTestResult.error && (
+              <Text style={styles.testResultError}>Error: {networkTestResult.error}</Text>
+            )}
+            {networkTestResult.details && (
+              <Text style={styles.testResultDetails}>
+                Details: {JSON.stringify(networkTestResult.details, null, 2)}
               </Text>
             )}
           </View>

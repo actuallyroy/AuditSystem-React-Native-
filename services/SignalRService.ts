@@ -1,6 +1,6 @@
 import { HubConnection, HubConnectionBuilder, LogLevel, HttpTransportType } from '@microsoft/signalr';
 import { debugLogger } from '../utils/DebugLogger';
-import { getSignalRConfig } from '../config/signalR';
+import { getSignalRConfig, buildSignalRUrl, getSignalRUrls } from '../config/signalR';
 
 const logger = debugLogger;
 
@@ -39,33 +39,65 @@ class SignalRService {
         return;
       }
 
-      const config = getSignalRConfig();
-      
-      logger.log('Attempting SignalR connection', { url: config.url });
+      const urls = getSignalRUrls(token);
+      let lastError: Error | null = null;
 
-      this.connection = new HubConnectionBuilder()
-        .withUrl(config.url, {
-          accessTokenFactory: () => token,
-          transport: HttpTransportType.WebSockets,
-          skipNegotiation: true
-        })
-        .configureLogging(LogLevel.Information)
-        .withAutomaticReconnect([0, 2000, 10000, 30000]) // Retry delays
-        .build();
+      // Try each URL until one works
+      for (const url of urls) {
+        try {
+          logger.log('Attempting SignalR connection', { url });
 
-      // Set up connection event handlers
-      this.setupConnectionHandlers();
+          this.connection = new HubConnectionBuilder()
+            .withUrl(url, {
+              transport: HttpTransportType.WebSockets
+            })
+            .configureLogging(LogLevel.Information)
+            .withAutomaticReconnect([0, 2000, 10000, 30000]) // Retry delays
+            .build();
 
-      // Start the connection
-      await this.connection.start();
-      
-      this.connectionStartTime = new Date();
-      this.reconnectAttempts = 0;
-      this.isReconnecting = false;
-      
-      logger.log('SignalR connection established', { 
-        connectionId: this.connection.connectionId 
-      });
+          // Set up connection event handlers
+          this.setupConnectionHandlers();
+
+          // Start the connection with timeout
+          const connectionPromise = this.connection.start();
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Connection timeout')), 10000);
+          });
+
+          await Promise.race([connectionPromise, timeoutPromise]);
+          
+          this.connectionStartTime = new Date();
+          this.reconnectAttempts = 0;
+          this.isReconnecting = false;
+          
+          logger.log('SignalR connection established', { 
+            connectionId: this.connection.connectionId,
+            url: url
+          });
+          
+          return; // Success, exit the loop
+
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+          logger.error('Failed to connect to SignalR with URL', { url, error: lastError.message });
+          
+          // Clean up failed connection
+          if (this.connection) {
+            try {
+              await this.connection.stop();
+            } catch (stopError) {
+              logger.error('Error stopping failed connection', stopError);
+            }
+            this.connection = null;
+          }
+          
+          // Continue to next URL
+          continue;
+        }
+      }
+
+      // If we get here, all URLs failed
+      throw lastError || new Error('All SignalR connection attempts failed');
 
     } catch (error) {
       logger.error('Failed to connect to SignalR', error);
@@ -229,33 +261,88 @@ class SignalRService {
   }
 
   // Test basic WebSocket connectivity
-  async testWebSocketConnectivity(): Promise<{ success: boolean; error?: string; details?: any }> {
+  async testWebSocketConnectivity(token?: string): Promise<{ success: boolean; error?: string; details?: any; testedUrls?: string[] }> {
+    const testedUrls: string[] = [];
+    
     try {
-      const config = getSignalRConfig();
-      logger.log('Testing WebSocket connectivity', { url: config.url });
+      if (token) {
+        // Test with authentication
+        const urls = getSignalRUrls(token);
+        
+        for (const url of urls) {
+          testedUrls.push(url);
+          let testConnection: HubConnection | null = null;
+          
+          try {
+            logger.log('Testing WebSocket connectivity', { url });
 
-      // Create a simple WebSocket connection test
-      const testConnection = new HubConnectionBuilder()
-        .withUrl(config.url, {
-          transport: HttpTransportType.WebSockets,
-          skipNegotiation: true
-        })
-        .configureLogging(LogLevel.Debug)
-        .build();
+            testConnection = new HubConnectionBuilder()
+              .withUrl(url, {
+                transport: HttpTransportType.WebSockets
+              })
+              .configureLogging(LogLevel.Debug)
+              .build();
 
-      // Set a short timeout for the test
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Connection timeout')), 10000);
-      });
+            // Set a short timeout for the test
+            const timeoutPromise = new Promise((_, reject) => {
+              setTimeout(() => reject(new Error('Connection timeout')), 8000);
+            });
 
-      const connectionPromise = testConnection.start();
+            const connectionPromise = testConnection.start();
 
-      await Promise.race([connectionPromise, timeoutPromise]);
-      
-      logger.log('WebSocket connectivity test successful');
-      await testConnection.stop();
-      
-      return { success: true };
+            await Promise.race([connectionPromise, timeoutPromise]);
+            
+            logger.log('WebSocket connectivity test successful', { url });
+            await testConnection.stop();
+            
+            return { success: true, testedUrls };
+          } catch (error) {
+            logger.error('WebSocket connectivity test failed for URL', { url, error });
+            if (testConnection) {
+              try {
+                await testConnection.stop();
+              } catch (stopError) {
+                // Ignore stop errors
+              }
+            }
+            continue;
+          }
+        }
+        
+        // All URLs failed
+        return { 
+          success: false, 
+          error: 'All WebSocket URLs failed to connect',
+          details: { message: 'All connection attempts failed' },
+          testedUrls
+        };
+      } else {
+        // Test without authentication (basic connectivity)
+        const config = getSignalRConfig();
+        testedUrls.push(config.url);
+        
+        logger.log('Testing WebSocket connectivity without auth', { url: config.url });
+
+        const testConnection = new HubConnectionBuilder()
+          .withUrl(config.url, {
+            transport: HttpTransportType.WebSockets
+          })
+          .configureLogging(LogLevel.Debug)
+          .build();
+
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Connection timeout')), 8000);
+        });
+
+        const connectionPromise = testConnection.start();
+
+        await Promise.race([connectionPromise, timeoutPromise]);
+        
+        logger.log('WebSocket connectivity test successful (no auth)');
+        await testConnection.stop();
+        
+        return { success: true, testedUrls };
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       logger.error('WebSocket connectivity test failed', error);
@@ -265,7 +352,8 @@ class SignalRService {
         details: {
           message: error instanceof Error ? error.message : 'Unknown error',
           stack: error instanceof Error ? error.stack : undefined
-        }
+        },
+        testedUrls
       };
     }
   }

@@ -1,10 +1,12 @@
-const API_BASE_URL = 'http://192.168.1.4:8080/api/v1';
-const WS_BASE_URL = 'ws://192.168.1.4:8080/hubs/notifications';
+// Base URLs for different environments
+const API_BASE_URL = 'https://test.scorptech.co/api/v1';
+const WS_BASE_URL = 'wss://test.scorptech.co/hubs/notifications';
 
 // SignalR Configuration
 export const signalRConfig = {
   production: {
     url: WS_BASE_URL,
+    fallbackUrls: [],
     heartbeatInterval: 30000, // 30 seconds
     reconnectInterval: 5000, // 5 seconds
     maxReconnectAttempts: 10,
@@ -14,6 +16,7 @@ export const signalRConfig = {
   
   development: {
     url: WS_BASE_URL,
+    fallbackUrls: [], 
     heartbeatInterval: 30000, // 30 seconds
     reconnectInterval: 3000, // 3 seconds (faster for dev)
     maxReconnectAttempts: 15, // More attempts for dev
@@ -23,6 +26,7 @@ export const signalRConfig = {
   
   staging: {
     url: WS_BASE_URL,
+    fallbackUrls: [],
     heartbeatInterval: 30000, // 30 seconds
     reconnectInterval: 5000, // 5 seconds
     maxReconnectAttempts: 10,
@@ -35,6 +39,23 @@ export const signalRConfig = {
 export const getSignalRConfig = () => {
   const environment = (global as any).__DEV__ ? 'development' : 'production';
   return signalRConfig[environment];
+};
+
+// Helper function to build SignalR URL with token (matching test format)
+export const buildSignalRUrl = (baseUrl: string, token: string): string => {
+  return `${baseUrl}?access_token=${token}`;
+};
+
+// Helper function to get all possible URLs for the current environment
+export const getSignalRUrls = (token: string): string[] => {
+  const config = getSignalRConfig();
+  const urls = [buildSignalRUrl(config.url, token)];
+  
+  if (config.fallbackUrls) {
+    urls.push(...config.fallbackUrls.map(url => buildSignalRUrl(url, token)));
+  }
+  
+  return urls;
 };
 
 // Connection status constants

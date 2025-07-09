@@ -2,6 +2,7 @@ import { debugLogger } from '../utils/DebugLogger';
 import { storageService } from './StorageService';
 import { networkService } from './NetworkService';
 import { backgroundSyncService } from './BackgroundSyncService';
+import { offlineService } from './OfflineService';
 
 
 const API_BASE_URL = 'http://192.168.1.4:8080/api/v1';
@@ -18,7 +19,7 @@ const debugLog = (message: string, data?: any) => {
 
 const debugError = (message: string, error?: any) => {
   if (DEBUG_MODE) {
-    debugLogger.error(`[AuditService] ${message}`, error);
+    debugLogger.error(`[AuditService] ${message}`, error); 
   }
 };
 
@@ -229,20 +230,44 @@ class AuditService {
   }
 
   /**
-   * Get all audits
+   * Get all audits (with offline support)
    */
   async getAllAudits(): Promise<AuditSummaryDto[]> {
     try {
-      const url = `${API_BASE_URL}/Audits`;
-      const response = await this.makeAuthenticatedRequest(url, { method: 'GET' }, 'Get All Audits');
+      // Check if online
+      const isOnline = await this.isOnline();
       
-      const audits = await this.handleResponse(response, 'Get All Audits');
-      debugLog('All Audits Retrieved', `Found ${audits.length} audits`);
-      return audits;
+      if (isOnline) {
+        // Try to get from server
+        try {
+          const url = `${API_BASE_URL}/Audits`;
+          const response = await this.makeAuthenticatedRequest(url, { method: 'GET' }, 'Get All Audits');
+          
+          const audits = await this.handleResponse(response, 'Get All Audits');
+          
+          // Cache the response for offline use
+          await storageService.storeCache('CACHE_AUDITS', audits, 30 * 60 * 1000); // 30 minutes
+          await storageService.storeOfflineAudits(audits);
 
+          debugLog('All Audits Retrieved from Server', `Found ${audits.length} audits`);
+          return audits;
+        } catch (serverError) {
+          debugError('Server request failed, falling back to offline data', serverError);
+          // Fall through to offline data
+        }
+      }
+
+      // Get from offline storage
+      const offlineAudits = await storageService.getOfflineAudits();
+      const cachedAudits = await storageService.getCache('CACHE_AUDITS');
+      
+      const audits = offlineAudits.length > 0 ? offlineAudits : (cachedAudits || []);
+      
+      debugLog('Audits Retrieved from Offline Storage', `Found ${audits.length} audits`);
+      return audits;
     } catch (error) {
       debugError('Get All Audits Error', error instanceof Error ? error.message : 'Unknown error');
-      throw error;
+      return [];
     }
   }
 
@@ -363,40 +388,102 @@ class AuditService {
   }
 
   /**
-   * Create a new audit
+   * Create a new audit (with offline support)
    */
   async createAudit(auditData: CreateAuditDto): Promise<AuditResponseDto> {
     try {
-      const url = `${API_BASE_URL}/Audits`;
+      const isOnline = await this.isOnline();
+      
+      if (isOnline) {
+        // Try to create on server
+        try {
+          const url = `${API_BASE_URL}/Audits`;
 
-      // Always require both templateId and assignmentId
-      const requestBody = {
-        templateId: auditData.templateId,
-        assignmentId: auditData.assignmentId,
-        storeInfo: auditData.storeInfo || {},
-        location: auditData.location || {},
-        responses: {}, // start with empty responses
-        media: {},
-        status: "In Progress", // or use a default appropriate for your backend
-        score: 0,
-        criticalIssues: 0,
-      };
+          const requestBody = {
+            templateId: auditData.templateId,
+            assignmentId: auditData.assignmentId,
+            storeInfo: auditData.storeInfo || {},
+            location: auditData.location || {},
+            responses: {},
+            media: {},
+            status: "In Progress",
+            score: 0,
+            criticalIssues: 0,
+          };
 
-      if (LOG_REQUESTS) {
-        debugLog('Create Audit Request Body', requestBody);
+          if (LOG_REQUESTS) {
+            debugLog('Create Audit Request Body', requestBody);
+          }
+
+          const response = await this.makeAuthenticatedRequest(url, {
+            method: 'POST',
+            body: JSON.stringify(requestBody),
+          }, 'Create Audit');
+
+          const audit = await this.handleResponse(response, 'Create Audit');
+          debugLog('Audit Created on Server', audit);
+
+          return audit;
+        } catch (serverError) {
+          debugError('Server creation failed, creating offline', serverError);
+          // Fall through to offline creation
+        }
       }
 
-      const response = await this.makeAuthenticatedRequest(url, {
+      // Create offline audit
+      const offlineAuditId = `offline_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const offlineAudit: AuditResponseDto = {
+        auditId: offlineAuditId,
+        templateId: auditData.templateId,
+        templateVersion: 1,
+        auditorId: await storageService.getUserId() || '',
+        organisationId: '',
+        status: 'In Progress',
+        startTime: new Date().toISOString(),
+        endTime: null,
+        storeInfo: auditData.storeInfo || null,
+        responses: null,
+        media: null,
+        location: auditData.location || null,
+        score: null,
+        criticalIssues: 0,
+        managerNotes: null,
+        isFlagged: false,
+        syncFlag: false,
+        createdAt: new Date().toISOString(),
+        templateName: null,
+        auditorName: null,
+        organisationName: null,
+        assignmentId: auditData.assignmentId || undefined,
+      };
+
+      // Store offline audit
+      const offlineAudits = await storageService.getOfflineAudits();
+      offlineAudits.push(offlineAudit);
+      await storageService.storeOfflineAudits(offlineAudits);
+
+      // Add to offline queue for later sync
+      await offlineService.addToQueue({
+        type: 'CREATE',
+        endpoint: '/Audits',
         method: 'POST',
-        body: JSON.stringify(requestBody),
-      }, 'Create Audit');
+        data: {
+          templateId: auditData.templateId,
+          assignmentId: auditData.assignmentId,
+          storeInfo: auditData.storeInfo || {},
+          location: auditData.location || {},
+          responses: {},
+          media: {},
+          status: "In Progress",
+          score: 0,
+          criticalIssues: 0,
+        },
+        maxRetries: 3,
+        priority: 'HIGH',
+      });
 
-      const audit = await this.handleResponse(response, 'Create Audit');
-      debugLog('Audit Created', audit);
-
-      // Optionally verify creation as before...
-
-      return audit;
+      debugLog('Audit Created Offline', offlineAudit);
+      return offlineAudit;
     } catch (error) {
       debugError('Create Audit Error', error instanceof Error ? error.message : 'Unknown error');
       throw error;
@@ -404,34 +491,78 @@ class AuditService {
   }
 
   /**
-   * Submit an audit
+   * Submit an audit (with offline support)
    */
   async submitAudit(auditId: string, submitData: SubmitAuditDto): Promise<AuditResponseDto> {
     try {
-      // First, verify the audit exists by trying to get it
-      try {
-        await this.getAuditById(auditId);
-        debugLog(`Audit ${auditId} exists, proceeding with submission`);
-      } catch (error) {
-        debugError(`Audit ${auditId} does not exist or cannot be accessed`, error);
-        throw new Error(`Audit ${auditId} not found`);
-      }
-
-      const url = `${API_BASE_URL}/Audits/${auditId}/submit`;
+      const isOnline = await this.isOnline();
       
-      if (LOG_REQUESTS) {
-        debugLog('Submit Audit Request Body', submitData);
+      if (isOnline) {
+        // Try to submit on server
+        try {
+          // First, verify the audit exists by trying to get it
+          try {
+            await this.getAuditById(auditId);
+            debugLog(`Audit ${auditId} exists, proceeding with submission`);
+          } catch (error) {
+            debugError(`Audit ${auditId} does not exist or cannot be accessed`, error);
+            throw new Error(`Audit ${auditId} not found`);
+          }
+
+          const url = `${API_BASE_URL}/Audits/${auditId}/submit`;
+          
+          if (LOG_REQUESTS) {
+            debugLog('Submit Audit Request Body', submitData);
+          }
+
+          const response = await this.makeAuthenticatedRequest(url, {
+            method: 'PUT',
+            body: JSON.stringify(submitData),
+          }, 'Submit Audit');
+
+          const audit = await this.handleResponse(response, 'Submit Audit');
+          debugLog('Audit Submitted on Server', `Audit ID: ${audit.auditId}, Status: ${audit.status}`);
+          return audit;
+        } catch (serverError) {
+          debugError('Server submission failed, submitting offline', serverError);
+          // Fall through to offline submission
+        }
       }
 
-      const response = await this.makeAuthenticatedRequest(url, {
+      // Submit offline audit
+      const offlineAudits = await storageService.getOfflineAudits();
+      const auditIndex = offlineAudits.findIndex(audit => audit.auditId === auditId);
+      
+      if (auditIndex === -1) {
+        throw new Error(`Audit ${auditId} not found in offline storage`);
+      }
+
+      // Update offline audit
+      const updatedAudit = {
+        ...offlineAudits[auditIndex],
+        status: 'Submitted',
+        endTime: new Date().toISOString(),
+        responses: submitData.responses,
+        media: submitData.media,
+        storeInfo: submitData.storeInfo,
+        location: submitData.location,
+      };
+
+      offlineAudits[auditIndex] = updatedAudit;
+      await storageService.storeOfflineAudits(offlineAudits);
+
+      // Add to offline queue for later sync
+      await offlineService.addToQueue({
+        type: 'SUBMIT',
+        endpoint: `/Audits/${auditId}/submit`,
         method: 'PUT',
-        body: JSON.stringify(submitData),
-      }, 'Submit Audit');
+        data: submitData,
+        maxRetries: 5,
+        priority: 'HIGH',
+      });
 
-      const audit = await this.handleResponse(response, 'Submit Audit');
-      debugLog('Audit Submitted', `Audit ID: ${audit.auditId}, Status: ${audit.status}`);
-      return audit;
-
+      debugLog('Audit Submitted Offline', `Audit ID: ${auditId}, Status: ${updatedAudit.status}`);
+      return updatedAudit;
     } catch (error) {
       debugError('Submit Audit Error', error instanceof Error ? error.message : 'Unknown error');
       throw error;

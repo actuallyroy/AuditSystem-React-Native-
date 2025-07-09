@@ -134,6 +134,121 @@ class NetworkService {
       checkConnection();
     });
   }
+
+  /**
+   * Test basic network connectivity to a host
+   */
+  async testHostConnectivity(host: string, port: number = 8080): Promise<{ success: boolean; error?: string; latency?: number }> {
+    try {
+      const startTime = Date.now();
+      
+      // Determine if it's an IP address or domain
+      const isIP = /^\d+\.\d+\.\d+\.\d+$/.test(host);
+      const protocol = isIP ? 'http' : 'https';
+      const url = `${protocol}://${host}:${port}`;
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      
+      const response = await fetch(url, {
+        method: 'HEAD',
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      const endTime = Date.now();
+      const latency = endTime - startTime;
+      
+      if (response.ok) {
+        return { success: true, latency };
+      } else {
+        return { success: false, error: `HTTP ${response.status}: ${response.statusText}` };
+      }
+    } catch (error) {
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Unknown network error' 
+      };
+    }
+  }
+
+  /**
+   * Test WebSocket server connectivity
+   */
+  async testWebSocketServerConnectivity(host: string): Promise<{ success: boolean; error?: string; details?: any }> {
+    try {
+      // First test basic connectivity
+      const connectivityTest = await this.testHostConnectivity(host);
+      if (!connectivityTest.success) {
+        return {
+          success: false,
+          error: `Host connectivity failed: ${connectivityTest.error}`,
+          details: { connectivityTest }
+        };
+      }
+
+      // Try to connect to WebSocket endpoint
+      const isIP = /^\d+\.\d+\.\d+\.\d+$/.test(host);
+      const wsProtocol = isIP ? 'ws' : 'wss';
+      const wsUrl = `${wsProtocol}://${host}/hubs/notifications`;
+      
+      // Create a simple WebSocket test
+      return new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          resolve({
+            success: false,
+            error: 'WebSocket connection timeout',
+            details: { wsUrl }
+          });
+        }, 10000);
+
+        try {
+          const ws = new WebSocket(wsUrl);
+          
+          ws.onopen = () => {
+            clearTimeout(timeout);
+            ws.close();
+            resolve({
+              success: true,
+              details: { wsUrl, latency: 'Connected successfully' }
+            });
+          };
+          
+          ws.onerror = (error) => {
+            clearTimeout(timeout);
+            resolve({
+              success: false,
+              error: 'WebSocket connection failed',
+              details: { wsUrl, error: error.toString() }
+            });
+          };
+          
+          ws.onclose = () => {
+            clearTimeout(timeout);
+            resolve({
+              success: false,
+              error: 'WebSocket connection closed',
+              details: { wsUrl }
+            });
+          };
+        } catch (error) {
+          clearTimeout(timeout);
+          resolve({
+            success: false,
+            error: 'Failed to create WebSocket connection',
+            details: { wsUrl, error: error instanceof Error ? error.message : 'Unknown error' }
+          });
+        }
+      });
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        details: { host }
+      };
+    }
+  }
 }
 
 export const networkService = new NetworkService(); 

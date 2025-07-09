@@ -2,6 +2,8 @@
 import { debugLogger } from '../utils/DebugLogger';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { storageService } from './StorageService';
+import { networkService } from './NetworkService';
+import { offlineService } from './OfflineService';
 
 const API_BASE_URL = 'http://192.168.1.4:8080/api/v1';
 
@@ -164,6 +166,13 @@ export interface ApiError {
 }
 
 class AuthService {
+  /**
+   * Check if device is online
+   */
+  private async isOnline(): Promise<boolean> {
+    return await networkService.checkConnectivity();
+  }
+
   /**
    * Convert UI status to API status
    */
@@ -467,59 +476,80 @@ class AuthService {
 
   async getAssignmentsForUser(userId: string): Promise<Assignment[]> {
     try {
-      const url = `${API_BASE_URL}/Assignments`;
-      const response = await this.makeAuthenticatedRequest(url, { method: 'GET' }, 'Get Assignments');
+      const isOnline = await this.isOnline();
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        // debugLogger.error('Get Assignments Error', `Status: ${response.status}, Body: ${errorText}`);
-        
-        // If 403, test token validity
-        if (response.status === 403) {
-          debugLogger.log('Testing Token Validity', 'Attempting to get user details...');
-          try {
-            const token = await storageService.getAuthToken();
-            if (token) {
-              await this.getUserDetails(userId, token);
-              debugLogger.log('Token Test Result', 'Token is valid but no assignment access');
-              throw new Error('You do not have permission to view assignments. Please contact your administrator.');
+      if (isOnline) {
+        // Try to get from server
+        try {
+          const url = `${API_BASE_URL}/Assignments`;
+          const response = await this.makeAuthenticatedRequest(url, { method: 'GET' }, 'Get Assignments');
+          
+          if (!response.ok) {
+            const errorText = await response.text();
+            
+            // If 403, test token validity
+            if (response.status === 403) {
+              debugLogger.log('Testing Token Validity', 'Attempting to get user details...');
+              try {
+                const token = await storageService.getAuthToken();
+                if (token) {
+                  await this.getUserDetails(userId, token);
+                  debugLogger.log('Token Test Result', 'Token is valid but no assignment access');
+                  throw new Error('You do not have permission to view assignments. Please contact your administrator.');
+                }
+              } catch (tokenError) {
+                debugLogger.error('Token Test Failed', 'Token appears to be invalid');
+                throw new Error('Authentication token is invalid or expired. Please log in again.');
+              }
             }
-          } catch (tokenError) {
-            debugLogger.error('Token Test Failed', 'Token appears to be invalid');
-            throw new Error('Authentication token is invalid or expired. Please log in again.');
+            
+            throw new Error(`Failed to fetch assignments: ${response.status}`);
           }
+
+          const responseText = await response.text();
+          if (LOG_REQUESTS) {
+            debugLogger.log('API Response Body', responseText);
+          }
+
+          let allAssignments: Assignment[];
+          try {
+            allAssignments = JSON.parse(responseText);
+          } catch (parseError) {
+            debugLogger.error('JSON Parse Error', `Response: ${responseText}`);
+            throw new Error('Invalid JSON response from server');
+          }
+
+          // Filter assignments for the current user and convert statuses
+          const userAssignments = allAssignments
+            .filter(assignment => assignment.assignedToId === userId)
+            .map(assignment => ({
+              ...assignment,
+              status: this.convertStatusToUi(assignment.status || 'pending')
+            }));
+
+          // Cache assignments for offline use
+          await storageService.storeCache('CACHE_ASSIGNMENTS', userAssignments, 30 * 60 * 1000); // 30 minutes
+          await storageService.storeOfflineAssignments(userAssignments);
+
+          debugLogger.log('Assignments Retrieved from Server', `Found ${userAssignments.length} assignments for user`);
+          return userAssignments;
+        } catch (serverError) {
+          debugLogger.error('Server request failed, falling back to offline data', serverError);
+          // Fall through to offline data
         }
-        
-        throw new Error(`Failed to fetch assignments: ${response.status}`);
       }
 
-      const responseText = await response.text();
-      if (LOG_REQUESTS) {
-        debugLogger.log('API Response Body', responseText);
-      }
-
-      let allAssignments: Assignment[];
-      try {
-        allAssignments = JSON.parse(responseText);
-      } catch (parseError) {
-        debugLogger.error('JSON Parse Error', `Response: ${responseText}`);
-        throw new Error('Invalid JSON response from server');
-      }
-
-      // Filter assignments for the current user and convert statuses
-      const userAssignments = allAssignments
-        .filter(assignment => assignment.assignedToId === userId)
-        .map(assignment => ({
-          ...assignment,
-          status: this.convertStatusToUi(assignment.status || 'pending')
-        }));
-
-      // debugLogger.log('Assignments Retrieved', `Found ${userAssignments.length} assignments for user out of ${allAssignments.length} total`);
-      return userAssignments;
-
+      // Get from offline storage
+      const offlineAssignments = await storageService.getOfflineAssignments();
+      const cachedAssignments = await storageService.getCache('CACHE_ASSIGNMENTS');
+      
+      const assignments = offlineAssignments.length > 0 ? offlineAssignments : (cachedAssignments || []);
+      
+      debugLogger.log('Assignments Retrieved from Offline Storage', `Found ${assignments.length} assignments`);
+      return assignments;
     } catch (error) {
-      // debugLogger.error('Get Assignments Error', error instanceof Error ? error.message : 'Unknown error');
-      throw error;
+      debugLogger.error('Get Assignments Error', error instanceof Error ? error.message : 'Unknown error');
+      return [];
     }
   }
 
@@ -569,36 +599,76 @@ class AuthService {
   }
 
   /**
-   * Get template details with questions
+   * Get template details with questions (with offline support)
    */
   async getTemplateDetails(templateId: string): Promise<TemplateDetails> {
     try {
-      const url = `${API_BASE_URL}/Templates/${templateId}`;
-      const response = await this.makeAuthenticatedRequest(url, { method: 'GET' }, 'Get Template Details');
+      const isOnline = await this.isOnline();
       
-      const templateData = await this.handleResponse(response, 'Get Template Details');
-      
-      // Parse questions if they're stored as JSON string
-      let questions: TemplateQuestions = { sections: [] };
-      if (templateData.questions) {
+      if (isOnline) {
+        // Try to get from server
         try {
-          questions = typeof templateData.questions === 'string' 
-            ? JSON.parse(templateData.questions) 
-            : templateData.questions;
-        } catch (parseError) {
-          debugLogger.error('Failed to parse template questions', parseError);
-          questions = { sections: [] };
+          const url = `${API_BASE_URL}/Templates/${templateId}`;
+          const response = await this.makeAuthenticatedRequest(url, { method: 'GET' }, 'Get Template Details');
+          
+          const templateData = await this.handleResponse(response, 'Get Template Details');
+          
+          // Parse questions if they're stored as JSON string
+          let questions: TemplateQuestions = { sections: [] };
+          if (templateData.questions) {
+            try {
+              questions = typeof templateData.questions === 'string' 
+                ? JSON.parse(templateData.questions) 
+                : templateData.questions;
+            } catch (parseError) {
+              debugLogger.error('Failed to parse template questions', parseError);
+              questions = { sections: [] };
+            }
+          }
+
+          const template: TemplateDetails = {
+            ...templateData,
+            questions
+          };
+
+          // Cache template for offline use
+          const templates = await storageService.getOfflineTemplates();
+          const existingIndex = templates.findIndex(t => t.templateId === templateId);
+          
+          if (existingIndex >= 0) {
+            templates[existingIndex] = template;
+          } else {
+            templates.push(template);
+          }
+          
+          await storageService.storeOfflineTemplates(templates);
+          await storageService.storeCache(`CACHE_TEMPLATE_${templateId}`, template, 60 * 60 * 1000); // 1 hour
+
+          debugLogger.log('Template Details Retrieved from Server', `Template: ${template.name}, Sections: ${questions.sections.length}`);
+          return template;
+        } catch (serverError) {
+          debugLogger.error('Server request failed, falling back to offline data', serverError);
+          // Fall through to offline data
         }
       }
 
-      const template: TemplateDetails = {
-        ...templateData,
-        questions
-      };
+      // Get from offline storage
+      const offlineTemplates = await storageService.getOfflineTemplates();
+      const template = offlineTemplates.find(t => t.templateId === templateId);
+      
+      if (template) {
+        debugLogger.log('Template Details Retrieved from Offline Storage', `Template: ${template.name}, Sections: ${template.questions?.sections?.length || 0}`);
+        return template;
+      }
 
-      debugLogger.log('Template Details Retrieved', `Template: ${template.name}, Sections: ${questions.sections.length}`);
-      return template;
+      // Try cache
+      const cachedTemplate = await storageService.getCache(`CACHE_TEMPLATE_${templateId}`);
+      if (cachedTemplate) {
+        debugLogger.log('Template Details Retrieved from Cache', `Template: ${cachedTemplate.name}, Sections: ${cachedTemplate.questions?.sections?.length || 0}`);
+        return cachedTemplate;
+      }
 
+      throw new Error(`Template ${templateId} not found in offline storage`);
     } catch (error) {
       debugLogger.error('Get Template Details Error', error instanceof Error ? error.message : 'Unknown error');
       throw error;

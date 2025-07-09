@@ -1,9 +1,8 @@
 import React, { createContext, useContext, useReducer, useEffect, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
-import SignalRService, { SignalRConnection } from '../services/SignalRService';
+import WebSocketNotificationService, { WebSocketConnection } from '../services/WebSocketNotificationService';
 import { useAuth } from './AuthContext';
 import { debugLogger } from '../utils/DebugLogger';
-import { getSignalRConfig } from '../config/signalR';
 
 const logger = debugLogger;
 
@@ -213,7 +212,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   // Set up periodic connection stats updates
   useEffect(() => {
     const updateStats = () => {
-      const stats = SignalRService.getConnectionStats();
+      const stats = WebSocketNotificationService.getConnectionStats();
       dispatch({ type: 'SET_CONNECTION_STATS', payload: stats });
     };
 
@@ -236,17 +235,17 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
       logger.log('Connecting to SignalR');
       
-      // Connect to SignalR
-      await SignalRService.connect(user.token);
+      // Connect to WebSocket
+      await WebSocketNotificationService.connect(user.token);
       
       // Subscribe to user notifications
       if (user.userId) {
-        await SignalRService.subscribeToUser(user.userId);
+        await WebSocketNotificationService.subscribeToUser(user.userId);
       }
       
       // Join organisation group if available
       if (user.organisationId) {
-        await SignalRService.joinOrganisation(user.organisationId);
+        await WebSocketNotificationService.joinOrganisation(user.organisationId);
       }
 
       // Set up notification handler
@@ -254,7 +253,17 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
         notificationHandlerRef.current(); // Cleanup previous handler
       }
       
-      const cleanup = SignalRService.onNotification((notification) => {
+      const cleanup = WebSocketNotificationService.onNotification((notificationMessage) => {
+        // Transform NotificationMessage to Notification format
+        const notification: Notification = {
+          id: notificationMessage.notificationId,
+          type: notificationMessage.type as 'audit_assigned' | 'audit_completed' | 'audit_reviewed' | 'system_alert',
+          title: notificationMessage.title,
+          message: notificationMessage.message,
+          timestamp: notificationMessage.timestamp,
+          isRead: notificationMessage.isRead,
+          userId: user?.userId || ''
+        };
         dispatch({ type: 'ADD_NOTIFICATION', payload: notification });
       });
       
@@ -274,15 +283,15 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const disconnectFromSignalR = () => {
     try {
-      SignalRService.disconnect();
+      WebSocketNotificationService.disconnect();
       if (notificationHandlerRef.current) {
         notificationHandlerRef.current();
         notificationHandlerRef.current = null;
       }
       dispatch({ type: 'SET_CONNECTED', payload: false });
-      logger.log('Disconnected from SignalR');
+      logger.log('Disconnected from WebSocket');
     } catch (error) {
-      logger.error('Error disconnecting from SignalR', error);
+      logger.error('Error disconnecting from WebSocket', error);
     }
   };
 
@@ -340,7 +349,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   };
 
   const getConnectionStats = () => {
-    return SignalRService.getConnectionStats();
+    return WebSocketNotificationService.getConnectionStats();
   };
 
   const value: NotificationContextType = {

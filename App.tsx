@@ -7,7 +7,9 @@ import { SafeAreaProvider } from "react-native-safe-area-context"
 import { Toaster } from 'sonner-native';
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { NotificationProvider } from "./contexts/NotificationContext";
+import { OfflineProvider } from "./contexts/OfflineContext";
 import { backgroundSyncService } from "./services/BackgroundSyncService";
+import OfflineIndicator from "./components/OfflineIndicator";
 import HomeScreen from "./screens/HomeScreen"
 import AuditDetailScreen from "./screens/AuditDetailScreen";
 import AuditExecutionScreen from "./screens/AuditExecutionScreen";
@@ -21,6 +23,7 @@ import DebugScreen from "./screens/DebugScreen";
 import ApiTestScreen from "./screens/ApiTestScreen";
 import NotificationScreen from "./screens/NotificationScreen";
 import { NotificationTestScreen } from "./screens/NotificationTestScreen";
+import OfflineSettingsScreen from "./screens/OfflineSettingsScreen";
 
 const Stack = createNativeStackNavigator();
 
@@ -51,6 +54,7 @@ function MainStack(): JSX.Element {
       <Stack.Screen name="NotificationTest" component={NotificationTestScreen} />
       <Stack.Screen name="Debug" component={DebugScreen} />
       <Stack.Screen name="ApiTest" component={ApiTestScreen} />
+      <Stack.Screen name="OfflineSettings" component={OfflineSettingsScreen} />
     </Stack.Navigator>
   );
 }
@@ -88,10 +92,13 @@ export default function App(): JSX.Element {
     <SafeAreaProvider style={styles.container}>
       <AuthProvider>
         <NotificationProvider>
-          <Toaster />
-          <NavigationContainer>
-            <RootNavigator />
-          </NavigationContainer>
+          <OfflineProvider>
+            <Toaster />
+            <NavigationContainer>
+              <RootNavigator />
+            </NavigationContainer>
+            <OfflineIndicator showDetails={true} />
+          </OfflineProvider>
         </NotificationProvider>
       </AuthProvider>
     </SafeAreaProvider>

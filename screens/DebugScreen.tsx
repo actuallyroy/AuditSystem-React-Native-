@@ -1,317 +1,115 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  RefreshControl,
-  Share,
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { debugLogger } from '../utils/DebugLogger';
-import { authService } from '../services/AuthService';
-import { backgroundSyncService } from '../services/BackgroundSyncService';
-import { networkService } from '../services/NetworkService';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, Button, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
+import { storageService } from '../services/StorageService';
 
-export default function DebugScreen({ navigation }: any) {
-  const [logs, setLogs] = useState(debugLogger.getLogs());
-  const [refreshing, setRefreshing] = useState(false);
-  const [syncStats, setSyncStats] = useState(backgroundSyncService.getStats());
-  const [networkInfo, setNetworkInfo] = useState<any>(null);
+const BASE_WS_URL = 'wss://test.scorptech.co/hubs/notifications';
+const ECHO_URL = 'wss://echo.websocket.events';
+
+const maskToken = (token: string | null) => {
+  if (!token) return 'No token';
+  if (token.length < 16) return token;
+  return token.substring(0, 8) + '...' + token.substring(token.length - 8);
+};
+
+const DebugScreen: React.FC = () => {
+  const [logs, setLogs] = useState<string[]>([]);
+  const [useEcho, setUseEcho] = useState(false);
+  const [useAuth, setUseAuth] = useState(true);
+  const [token, setToken] = useState<string | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+
+  const log = (msg: string) => {
+    setLogs((prev) => [...prev, `${new Date().toISOString()} | ${msg}`]);
+    console.log(msg);
+  };
+
+  // Fetch token on mount and when toggling auth
+  useEffect(() => {
+    if (useAuth && !useEcho) {
+      storageService.getAuthToken().then(setToken);
+    } else {
+      setToken(null);
+    }
+  }, [useAuth, useEcho]);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setLogs(debugLogger.getLogs());
-      setSyncStats(backgroundSyncService.getStats());
-    }, 1000);
-
-    // Load network info
-    const loadNetworkInfo = async () => {
-      const info = await networkService.getNetworkInfo();
-      setNetworkInfo(info);
-    };
-    loadNetworkInfo();
-
-    return () => clearInterval(interval);
-  }, []);
-
-  const onRefresh = () => {
-    setRefreshing(true);
-    setLogs(debugLogger.getLogs());
-    setRefreshing(false);
-  };
-
-  const clearLogs = () => {
-    debugLogger.clearLogs();
     setLogs([]);
-  };
-
-  const shareLogs = async () => {
-    try {
-      const logsString = debugLogger.getLogsAsString();
-      await Share.share({
-        message: logsString || 'No logs available',
-        title: 'Debug Logs',
-      });
-    } catch (error) {
-      console.error('Error sharing logs:', error);
+    let url = useEcho ? ECHO_URL : BASE_WS_URL;
+    if (useAuth && !useEcho && token) {
+      url = `${BASE_WS_URL}?access_token=${token}`;
     }
-  };
+    log(`Connecting to: ${url}`);
+    const ws = new WebSocket(url);
+    wsRef.current = ws;
 
-  const testConnection = async () => {
-    debugLogger.log('Testing API connection...');
-    try {
-      const isConnected = await authService.testConnection();
-      debugLogger.log('Connection test result:', { isConnected });
-    } catch (error) {
-      debugLogger.error('Connection test failed:', error);
-    }
-  };
-
-  const triggerSync = async () => {
-    debugLogger.log('Manually triggering sync...');
-    try {
-      const result = await backgroundSyncService.triggerSync();
-      debugLogger.log('Manual sync result:', result);
-    } catch (error) {
-      debugLogger.error('Manual sync failed:', error);
-    }
-  };
-
-  const getLevelColor = (level: string) => {
-    switch (level) {
-      case 'error':
-        return '#dc3545';
-      case 'warn':
-        return '#ffc107';
-      case 'info':
-        return '#17a2b8';
-      default:
-        return '#333333';
-    }
-  };
-
-  const formatTimestamp = (timestamp: string) => {
-    return new Date(timestamp).toLocaleTimeString();
-  };
+    ws.onopen = () => {
+      log('WebSocket opened!');
+      if (useEcho) {
+        ws.send('Hello from React Native!');
+        log('Sent: Hello from React Native!');
+      } else {
+        ws.send('{"protocol":"json","version":1}');
+        log('Sent: {"protocol":"json","version":1}');
+      }
+    };
+    ws.onmessage = (e) => {
+      log(`Message: ${e.data}`);
+    };
+    ws.onerror = (e) => {
+      log(`Error: ${JSON.stringify(e)}`);
+    };
+    ws.onclose = (e) => {
+      log(`Closed: code=${e.code}, reason=${e.reason}`);
+    };
+    return () => {
+      ws.close();
+      wsRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useEcho, useAuth, token]);
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#0066CC" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Debug Console</Text>
-        <View style={styles.headerActions}>
-          <TouchableOpacity onPress={shareLogs} style={styles.headerButton}>
-            <Ionicons name="share-outline" size={20} color="#0066CC" />
+    <View style={styles.container}>
+      <Text style={styles.title}>Minimal WebSocket Debug</Text>
+      <View style={styles.buttonRow}>
+        <Button
+          title={useEcho ? 'Switch to test.scorptech.co' : 'Switch to Echo Server'}
+          onPress={() => setUseEcho((prev) => !prev)}
+        />
+        {!useEcho && (
+          <TouchableOpacity
+            style={[styles.authButton, useAuth ? styles.authOn : styles.authOff]}
+            onPress={() => setUseAuth((prev) => !prev)}
+          >
+            <Text style={styles.authButtonText}>{useAuth ? 'Auth: ON' : 'Auth: OFF'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={clearLogs} style={styles.headerButton}>
-            <Ionicons name="trash-outline" size={20} color="#dc3545" />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      <View style={styles.actionButtons}>
-        <TouchableOpacity style={styles.testButton} onPress={testConnection}>
-          <Ionicons name="wifi-outline" size={16} color="#fff" />
-          <Text style={styles.testButtonText}>Test API Connection</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.testButton, { marginTop: 8, backgroundColor: '#28a745' }]} onPress={triggerSync}>
-          <Ionicons name="sync-outline" size={16} color="#fff" />
-          <Text style={styles.testButtonText}>Trigger Sync</Text>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={[styles.testButton, { marginTop: 8, backgroundColor: '#6f42c1' }]} 
-          onPress={() => navigation.navigate('NotificationTest' as never)}
-        >
-          <Ionicons name="notifications-outline" size={16} color="#fff" />
-          <Text style={styles.testButtonText}>Test Notifications</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.statsContainer}>
-        <Text style={styles.statsText}>Total Logs: {logs.length}</Text>
-        <Text style={styles.statsText}>
-          Errors: {logs.filter(log => log.level === 'error').length}
-        </Text>
-        <Text style={styles.statsText}>
-          Sync Queue: {syncStats.queueSize}
-        </Text>
-        <Text style={styles.statsText}>
-          Sync Running: {syncStats.isRunning ? 'Yes' : 'No'}
-        </Text>
-        {networkInfo && (
-          <Text style={styles.statsText}>
-            Network: {networkInfo.isConnected ? 'Online' : 'Offline'} ({networkInfo.type})
-          </Text>
         )}
       </View>
-
-      <ScrollView
-        style={styles.logsContainer}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      >
-        {logs.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Ionicons name="document-text-outline" size={48} color="#6c757d" />
-            <Text style={styles.emptyStateText}>No logs available</Text>
-            <Text style={styles.emptyStateSubtext}>
-              Perform some actions to see debug information here
-            </Text>
-          </View>
-        ) : (
-          logs.map((log, index) => (
-            <View key={index} style={styles.logEntry}>
-              <View style={styles.logHeader}>
-                <Text style={[styles.logLevel, { color: getLevelColor(log.level) }]}>
-                  {log.level.toUpperCase()}
-                </Text>
-                <Text style={styles.logTimestamp}>{formatTimestamp(log.timestamp)}</Text>
-              </View>
-              <Text style={styles.logMessage}>{log.message}</Text>
-              {log.data && (
-                <View style={styles.logDataContainer}>
-                  <Text style={styles.logDataLabel}>Data:</Text>
-                  <Text style={styles.logData}>{JSON.stringify(log.data, null, 2)}</Text>
-                </View>
-              )}
-            </View>
-          ))
-        )}
+      {!useEcho && useAuth && (
+        <Text style={styles.tokenText}>Token: {maskToken(token)}</Text>
+      )}
+      <Text style={styles.url}>Current URL: {useEcho ? ECHO_URL : (useAuth && token ? `${BASE_WS_URL}?access_token=...` : BASE_WS_URL)}</Text>
+      <ScrollView style={styles.logBox}>
+        {logs.map((l, i) => (
+          <Text key={i} style={styles.logText}>{l}</Text>
+        ))}
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
-}
+};
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f7fa',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  backButton: {
-    padding: 8,
-    marginRight: 8,
-  },
-  headerTitle: {
-    flex: 1,
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333333',
-  },
-  headerActions: {
-    flexDirection: 'row',
-  },
-  headerButton: {
-    padding: 8,
-    marginLeft: 8,
-  },
-  actionButtons: {
-    padding: 16,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  testButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#0066CC',
-    padding: 12,
-    borderRadius: 8,
-  },
-  testButtonText: {
-    color: '#ffffff',
-    fontWeight: '600',
-    marginLeft: 8,
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    padding: 12,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  statsText: {
-    fontSize: 14,
-    color: '#6c757d',
-  },
-  logsContainer: {
-    flex: 1,
-    padding: 16,
-  },
-  emptyState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-  },
-  emptyStateText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#6c757d',
-    marginTop: 16,
-  },
-  emptyStateSubtext: {
-    fontSize: 14,
-    color: '#6c757d',
-    textAlign: 'center',
-    marginTop: 8,
-    paddingHorizontal: 40,
-  },
-  logEntry: {
-    backgroundColor: '#ffffff',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-    borderLeftWidth: 4,
-    borderLeftColor: '#0066CC',
-  },
-  logHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  logLevel: {
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  logTimestamp: {
-    fontSize: 12,
-    color: '#6c757d',
-  },
-  logMessage: {
-    fontSize: 14,
-    color: '#333333',
-    marginBottom: 8,
-  },
-  logDataContainer: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 4,
-    padding: 8,
-  },
-  logDataLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6c757d',
-    marginBottom: 4,
-  },
-  logData: {
-    fontSize: 12,
-    color: '#333333',
-    fontFamily: 'monospace',
-  },
-}); 
+  container: { flex: 1, padding: 16, backgroundColor: '#fff' },
+  title: { fontSize: 18, fontWeight: 'bold', marginBottom: 8 },
+  url: { fontSize: 12, marginBottom: 8, color: '#333' },
+  logBox: { flex: 1, backgroundColor: '#eee', padding: 8, borderRadius: 8 },
+  logText: { fontSize: 12, color: '#222', marginBottom: 2 },
+  buttonRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  authButton: { marginLeft: 12, padding: 8, borderRadius: 6 },
+  authOn: { backgroundColor: '#4CAF50' },
+  authOff: { backgroundColor: '#F44336' },
+  authButtonText: { color: '#fff', fontWeight: 'bold' },
+  tokenText: { fontSize: 10, color: '#888', marginBottom: 4 },
+});
+
+export default DebugScreen; 
