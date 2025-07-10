@@ -2,6 +2,7 @@ package com.anonymous.snack4296b9d7581c4ad8b4d651da4fa902b4
 
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -11,12 +12,24 @@ import com.facebook.react.defaults.DefaultReactActivityDelegate
 import expo.modules.ReactActivityDelegateWrapper
 
 class MainActivity : ReactActivity() {
+  companion object {
+    private const val TAG = "MainActivity"
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     // Set the theme to AppTheme BEFORE onCreate to support
     // coloring the background, status bar, and navigation bar.
     // This is required for expo-splash-screen.
     setTheme(R.style.AppTheme);
     super.onCreate(null)
+    
+    // Initialize badge system
+    try {
+      BadgeUtils.updateBadge(this, 0)
+      Log.d(TAG, "Badge system initialized")
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to initialize badge system", e)
+    }
   }
 
   /**

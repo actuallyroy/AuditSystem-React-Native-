@@ -408,14 +408,9 @@ class AuthService {
     debugLog('Starting get user details request', { userId });
     
     try {
-      const response = await fetch(`${API_BASE_URL}/Users/${userId}`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-      });
-
+      const url = `${API_BASE_URL}/Users/${userId}`;
+      const response = await this.makeAuthenticatedRequest(url, { method: 'GET' }, 'Get User Details');
+      
       return await this.handleResponse(response, 'Get User Details');
     } catch (error) {
       debugError('Get user details error:', error);
@@ -433,14 +428,11 @@ class AuthService {
     debugLog('Starting change password request', { userId });
     
     try {
-      const response = await fetch(`${API_BASE_URL}/Users/${userId}/change-password`, {
+      const url = `${API_BASE_URL}/Users/${userId}/change-password`;
+      const response = await this.makeAuthenticatedRequest(url, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
         body: JSON.stringify(passwordData),
-      });
+      }, 'Change Password');
 
       await this.handleResponse(response, 'Change Password');
     } catch (error) {
@@ -554,21 +546,266 @@ class AuthService {
   }
 
   /**
-   * Test if the current token is valid by trying to get user details
+   * Comprehensive token validation test for debugging
    */
-  async testTokenValidity(): Promise<boolean> {
+  async debugTokenValidation(): Promise<{
+    success: boolean;
+    details: {
+      hasToken: boolean;
+      hasUserId: boolean;
+      isOnline: boolean;
+      tokenLength?: number;
+      userId?: string;
+      userDetailsEndpoint: { status: number; response: string; success: boolean } | undefined;
+      healthEndpoint: { status: number; response: string; success: boolean } | undefined;
+      errors: string[];
+    };
+  }> {
+    const result: {
+      success: boolean;
+      details: {
+        hasToken: boolean;
+        hasUserId: boolean;
+        isOnline: boolean;
+        tokenLength?: number;
+        userId?: string;
+        userDetailsEndpoint: { status: number; response: string; success: boolean } | undefined;
+        healthEndpoint: { status: number; response: string; success: boolean } | undefined;
+        errors: string[];
+      };
+    } = {
+      success: false,
+      details: {
+        hasToken: false,
+        hasUserId: false,
+        isOnline: false,
+        tokenLength: 0,
+        userId: '',
+        userDetailsEndpoint: undefined,
+        healthEndpoint: undefined,
+        errors: []
+      }
+    };
+
     try {
+      debugLog('Starting comprehensive token validation debug test');
+      
+      // Check network connectivity
+      const isOnline = await this.isOnline();
+      result.details.isOnline = isOnline;
+      debugLog('Network connectivity:', { isOnline });
+      
+      if (!isOnline) {
+        result.details.errors.push('No network connectivity');
+        return result;
+      }
+      
+      // Check token and userId
       const token = await storageService.getAuthToken();
       const userId = await storageService.getUserId();
       
+      result.details.hasToken = !!token;
+      result.details.hasUserId = !!userId;
+      result.details.tokenLength = token?.length || 0;
+      result.details.userId = userId || '';
+      
+      debugLog('Token and userId check:', { hasToken: !!token, hasUserId: !!userId, tokenLength: token?.length });
+      
       if (!token || !userId) {
+        result.details.errors.push('Missing token or userId');
+        return result;
+      }
+
+      // Test user details endpoint
+      try {
+        debugLog('Testing user details endpoint');
+        const url = `${API_BASE_URL}/Users/${userId}`;
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+
+        const responseText = await response.text();
+        const userDetailsSuccess = response.ok;
+        
+        result.details.userDetailsEndpoint = {
+          status: response.status,
+          response: responseText,
+          success: userDetailsSuccess
+        };
+        
+        debugLog('User details endpoint result:', { status: response.status, success: userDetailsSuccess });
+        
+        if (userDetailsSuccess) {
+          result.success = true;
+          return result;
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        result.details.errors.push(`User details endpoint error: ${errorMessage}`);
+        debugError('User details endpoint error:', error);
+      }
+
+      // Test health endpoint
+      try {
+        debugLog('Testing health endpoint');
+        const healthUrl = `${API_BASE_URL}/health`;
+        const healthResponse = await fetch(healthUrl, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+
+        const healthResponseText = await healthResponse.text();
+        const healthSuccess = healthResponse.ok;
+        
+        result.details.healthEndpoint = {
+          status: healthResponse.status,
+          response: healthResponseText,
+          success: healthSuccess
+        };
+        
+        debugLog('Health endpoint result:', { status: healthResponse.status, success: healthSuccess });
+        
+        if (healthSuccess) {
+          result.success = true;
+          return result;
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        result.details.errors.push(`Health endpoint error: ${errorMessage}`);
+        debugError('Health endpoint error:', error);
+      }
+
+      if (result.details.errors.length === 0) {
+        result.details.errors.push('All endpoints failed but no specific errors captured');
+      }
+      
+      return result;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      result.details.errors.push(`General error: ${errorMessage}`);
+      debugError('Debug token validation error:', error);
+      return result;
+    }
+  }
+
+  /**
+   * Test if the current token is valid by making a simple authenticated request
+   */
+  async testTokenValidity(): Promise<boolean> {
+    try {
+      debugLog('Starting token validation test');
+      
+      // First check if we're online
+      const isOnline = await this.isOnline();
+      debugLog('Network connectivity check:', { isOnline });
+      
+      if (!isOnline) {
+        debugLog('No network connectivity, skipping token validation');
+        return false;
+      }
+      
+      const token = await storageService.getAuthToken();
+      const userId = await storageService.getUserId();
+      
+      debugLog('Token validation - Token exists:', { hasToken: !!token, hasUserId: !!userId });
+      
+      if (!token || !userId) {
+        debugLog('No token or userId found for validation');
         return false;
       }
 
-      await this.getUserDetails(userId, token);
-      return true;
+      debugLog('Testing token validity for user:', userId);
+      debugLog('Token preview:', token.length > 20 ? `${token.substring(0, 10)}...${token.substring(token.length - 10)}` : token);
+      
+      // First try to get user details which should work if token is valid
+      try {
+        debugLog('Attempting user details endpoint validation');
+        const url = `${API_BASE_URL}/Users/${userId}`;
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+
+        debugLog('User details endpoint response status:', response.status);
+
+        if (response.ok) {
+          debugLog('Token validation successful via user details endpoint');
+          return true;
+        } else {
+          const responseText = await response.text();
+          debugLog('User details endpoint failed:', { status: response.status, response: responseText });
+          
+          // Check if it's a token expiration error
+          if (this.isTokenExpired(response, responseText)) {
+            debugLog('Token is expired');
+            await this.handleTokenExpiration();
+            return false;
+          }
+        }
+      } catch (userDetailsError) {
+        debugError('User details endpoint error:', userDetailsError);
+        debugError('User details error details:', {
+          errorType: userDetailsError?.constructor?.name,
+          errorMessage: userDetailsError instanceof Error ? userDetailsError.message : String(userDetailsError),
+          stack: userDetailsError instanceof Error ? userDetailsError.stack : undefined
+        });
+      }
+
+      // Fallback: try a simple health check with authentication
+      try {
+        debugLog('Attempting health endpoint validation');
+        const healthUrl = `${API_BASE_URL}/health`;
+        const healthResponse = await fetch(healthUrl, {
+          method: 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+
+        debugLog('Health endpoint response status:', healthResponse.status);
+
+        if (healthResponse.ok) {
+          debugLog('Token validation successful via health endpoint');
+          return true;
+        } else {
+          const responseText = await healthResponse.text();
+          debugLog('Health endpoint failed:', { status: healthResponse.status, response: responseText });
+          
+          // Check if it's a token expiration error
+          if (this.isTokenExpired(healthResponse, responseText)) {
+            debugLog('Token is expired');
+            await this.handleTokenExpiration();
+          }
+        }
+      } catch (healthError) {
+        debugError('Health endpoint error:', healthError);
+        debugError('Health error details:', {
+          errorType: healthError?.constructor?.name,
+          errorMessage: healthError instanceof Error ? healthError.message : String(healthError),
+          stack: healthError instanceof Error ? healthError.stack : undefined
+        });
+      }
+
+      debugLog('All token validation attempts failed');
+      return false;
     } catch (error) {
-      debugLogger.error('Token validity test failed', error);
+      debugError('Token validity test failed:', error);
+      debugError('Token validation error details:', {
+        errorType: error?.constructor?.name,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
       return false;
     }
   }

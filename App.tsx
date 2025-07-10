@@ -10,6 +10,7 @@ import { NotificationProvider } from "./contexts/NotificationContext";
 import { OfflineProvider } from "./contexts/OfflineContext";
 import { backgroundSyncService } from "./services/BackgroundSyncService";
 import OfflineIndicator from "./components/OfflineIndicator";
+import TokenValidationScreen from "./components/TokenValidationScreen";
 import HomeScreen from "./screens/HomeScreen"
 import AuditDetailScreen from "./screens/AuditDetailScreen";
 import AuditExecutionScreen from "./screens/AuditExecutionScreen";
@@ -22,7 +23,7 @@ import VerifyEmailScreen from "./screens/VerifyEmailScreen";
 import DebugScreen from "./screens/DebugScreen";
 import ApiTestScreen from "./screens/ApiTestScreen";
 import NotificationScreen from "./screens/NotificationScreen";
-import { NotificationTestScreen } from "./screens/NotificationTestScreen";
+import NotificationTestScreen from "./screens/NotificationTestScreen";
 import OfflineSettingsScreen from "./screens/OfflineSettingsScreen";
 
 const Stack = createNativeStackNavigator();
@@ -60,7 +61,7 @@ function MainStack(): JSX.Element {
 }
 
 function RootNavigator(): JSX.Element {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, tokenValidating } = useAuth();
 
   // Start background sync service when authenticated
   React.useEffect(() => {
@@ -76,6 +77,12 @@ function RootNavigator(): JSX.Element {
     };
   }, [isAuthenticated]);
 
+  // Show token validation screen when validating tokens
+  if (tokenValidating) {
+    return <TokenValidationScreen message="Validating your session..." />;
+  }
+
+  // Show loading screen when checking auth status
   if (loading) {
     return (
       <View style={styles.loadingContainer}>

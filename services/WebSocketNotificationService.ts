@@ -3,7 +3,7 @@ import { debugLogger } from '../utils/DebugLogger';
 const logger = debugLogger;
 
 // Base URL for WebSocket connections
-const WS_BASE_URL = 'wss://test.scorptech.co/hubs/notifications';
+const WS_BASE_URL = 'ws://192.168.1.4:8080/hubs/notifications';
 
 export interface WebSocketConnection {
   isConnected: boolean;
@@ -23,8 +23,16 @@ export interface NotificationMessage {
   title: string;
   message: string;
   type: string;
+  priority: string;
   timestamp: string;
-  isRead: boolean;
+  userId: string;
+  organisationId: string;
+  isRead?: boolean;
+}
+
+export interface DeliveryAcknowledgment {
+  notificationId: string;
+  acknowledgedAt: string;
 }
 
 class WebSocketNotificationService {
@@ -37,6 +45,8 @@ class WebSocketNotificationService {
   private lastHeartbeat: Date | null = null;
   private pendingMessages = 0;
   private messageHandlers: Map<string, (data: any) => void> = new Map();
+  private unreadCountHandlers: Map<string, (count: number) => void> = new Map();
+  private deliveryAcknowledgmentHandlers: Map<string, (data: DeliveryAcknowledgment) => void> = new Map();
   private token: string | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
@@ -69,6 +79,9 @@ class WebSocketNotificationService {
       
       logger.log('WebSocket connection established');
       
+      // Automatically subscribe to user notifications after connection
+      await this.autoSubscribeToUser(token);
+      
     } catch (error) {
       logger.error('Failed to connect to WebSocket', error);
       throw error;
@@ -86,6 +99,9 @@ class WebSocketNotificationService {
         reject(new Error('Connection timeout'));
       }, 10000);
 
+      let handshakeSent = false;
+      let handshakeResponseReceived = false;
+
       this.ws!.onopen = () => {
         clearTimeout(timeout);
         logger.log('WebSocket opened!');
@@ -98,8 +114,31 @@ class WebSocketNotificationService {
         
         this.ws!.send(JSON.stringify(handshakeMessage) + '\u001e');
         logger.log('Sent handshake:', handshakeMessage);
-        
-        resolve();
+        handshakeSent = true;
+      };
+
+      // Set up a temporary message handler for handshake response
+      const originalOnMessage = this.ws!.onmessage;
+      this.ws!.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          logger.log('Handshake response received:', data);
+          
+          if (handshakeSent && !handshakeResponseReceived) {
+            handshakeResponseReceived = true;
+            // Restore original message handler
+            this.ws!.onmessage = originalOnMessage;
+            resolve();
+          }
+        } catch (error) {
+          logger.log('Raw handshake message:', event.data);
+          if (handshakeSent && !handshakeResponseReceived) {
+            handshakeResponseReceived = true;
+            // Restore original message handler
+            this.ws!.onmessage = originalOnMessage;
+            resolve();
+          }
+        }
       };
 
       this.ws!.onerror = (error) => {
@@ -114,23 +153,34 @@ class WebSocketNotificationService {
 
     this.ws.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
-        logger.log('Received message:', data);
+        // Split by record separator and process each message
+        const messages = event.data.split('\u001e').filter((msg: string) => msg.trim());
         
-        // Handle different message types
-        if (data.type === 1) {
-          // Invocation message
-          this.handleInvocation(data);
-        } else if (data.type === 6) {
-          // Ping message
-          this.handlePing();
-        } else if (data.type === 7) {
-          // Close message
-          logger.log('Close message received');
-        } else if (data.target) {
-          // Method invocation
-          this.handleMethodInvocation(data);
-        }
+        messages.forEach((message: string) => {
+          if (!message.trim()) return;
+          
+          try {
+            const data = JSON.parse(message);
+            logger.log('Received message:', data);
+            
+            // Handle different message types
+            if (data.type === 1) {
+              // Invocation message
+              this.handleInvocation(data);
+            } else if (data.type === 6) {
+              // Ping message
+              this.handlePing();
+            } else if (data.type === 7) {
+              // Close message
+              logger.log('Close message received');
+            } else if (data.target) {
+              // Method invocation
+              this.handleMethodInvocation(data);
+            }
+          } catch (parseError) {
+            logger.log('Failed to parse message:', message);
+          }
+        });
       } catch (error) {
         logger.log('Raw message:', event.data);
       }
@@ -155,6 +205,11 @@ class WebSocketNotificationService {
         this.lastHeartbeat = new Date();
         logger.log('Received notification via WebSocket', { notification: args[0] });
         
+        // Automatically acknowledge delivery for new notifications
+        this.acknowledgeDelivery(args[0].notificationId).catch((error) => {
+          logger.error('Failed to automatically acknowledge delivery', error);
+        });
+        
         // Notify all registered handlers
         this.messageHandlers.forEach((handler) => {
           try {
@@ -166,8 +221,41 @@ class WebSocketNotificationService {
         break;
         
       case 'UnreadCount':
-        logger.log('Unread count updated:', args[0]);
-        // Handle unread count update
+        const unreadCount = args[0];
+        logger.log('Unread count updated:', unreadCount);
+        
+        // Notify all registered unread count handlers
+        this.unreadCountHandlers.forEach((handler) => {
+          try {
+            handler(unreadCount);
+          } catch (error) {
+            logger.error('Error in unread count handler', error);
+          }
+        });
+        break;
+        
+      case 'NotificationMarkedAsRead':
+        logger.log('Notification marked as read confirmation:', args[0]);
+        // Handle read confirmation if needed
+        break;
+        
+      case 'AllNotificationsMarkedAsRead':
+        logger.log('All notifications marked as read confirmation:', args[0]);
+        // Handle all read confirmation if needed
+        break;
+        
+      case 'DeliveryAcknowledged':
+        const acknowledgment = args[0];
+        logger.log('Delivery acknowledgment confirmed:', acknowledgment);
+        
+        // Notify all registered delivery acknowledgment handlers
+        this.deliveryAcknowledgmentHandlers.forEach((handler) => {
+          try {
+            handler(acknowledgment);
+          } catch (error) {
+            logger.error('Error in delivery acknowledgment handler', error);
+          }
+        });
         break;
         
       case 'Heartbeat':
@@ -187,6 +275,62 @@ class WebSocketNotificationService {
   private handlePing(): void {
     logger.log('Ping received');
     this.lastHeartbeat = new Date();
+  }
+
+  private async autoSubscribeToUser(token: string): Promise<void> {
+    try {
+      // Extract user ID and organisation ID from JWT token
+      const { userId, organisationId } = this.extractUserInfoFromToken(token);
+      
+      if (userId) {
+        await this.subscribeToUser(userId);
+        logger.log('Auto-subscribed to user notifications', { userId });
+      } else {
+        logger.warn('Could not extract user ID from token for auto-subscription');
+      }
+      
+      if (organisationId) {
+        await this.joinOrganisation(organisationId);
+        logger.log('Auto-joined organisation group', { organisationId });
+      } else {
+        logger.warn('Could not extract organisation ID from token for auto-join');
+      }
+    } catch (error) {
+      logger.error('Failed to auto-subscribe to user notifications', error);
+    }
+  }
+
+  private extractUserInfoFromToken(token: string): { userId: string | null; organisationId: string | null } {
+    try {
+      // JWT tokens have 3 parts separated by dots
+      const parts = token.split('.');
+      if (parts.length !== 3) {
+        logger.warn('Invalid JWT token format');
+        return { userId: null, organisationId: null };
+      }
+
+      // Decode the payload (second part)
+      const payload = parts[1];
+      // Add padding if needed for base64 decoding
+      const paddedPayload = payload + '='.repeat((4 - payload.length % 4) % 4);
+      const decodedPayload = atob(paddedPayload.replace(/-/g, '+').replace(/_/g, '/'));
+      const claims = JSON.parse(decodedPayload);
+
+      // Extract user ID and organisation ID from claims
+      const userId = claims.nameid || claims.sub || claims.userId;
+      const organisationId = claims.organisation_id || claims.orgId || claims.organizationId;
+      
+      if (userId) {
+        logger.log('Extracted user info from token', { userId, organisationId });
+      } else {
+        logger.warn('No user ID found in JWT claims', { claims });
+      }
+      
+      return { userId, organisationId };
+    } catch (error) {
+      logger.error('Failed to extract user info from token', error);
+      return { userId: null, organisationId: null };
+    }
   }
 
   private handleConnectionError(): void {
@@ -250,6 +394,8 @@ class WebSocketNotificationService {
         this.lastHeartbeat = null;
         this.pendingMessages = 0;
         this.messageHandlers.clear();
+        this.unreadCountHandlers.clear();
+        this.deliveryAcknowledgmentHandlers.clear();
         this.token = null;
       }
     } catch (error) {
@@ -269,7 +415,7 @@ class WebSocketNotificationService {
         arguments: [userId]
       };
 
-      this.ws.send(JSON.stringify(message));
+      this.ws.send(JSON.stringify(message) + '\u001e');
       logger.log('Subscribed to user notifications', { userId });
     } catch (error) {
       logger.error('Failed to subscribe to user', error);
@@ -289,7 +435,7 @@ class WebSocketNotificationService {
         arguments: [organisationId]
       };
 
-      this.ws.send(JSON.stringify(message));
+      this.ws.send(JSON.stringify(message) + '\u001e');
       logger.log('Joined organisation group', { organisationId });
     } catch (error) {
       logger.error('Failed to join organisation', error);
@@ -309,7 +455,7 @@ class WebSocketNotificationService {
         arguments: [organisationId]
       };
 
-      this.ws.send(JSON.stringify(message));
+      this.ws.send(JSON.stringify(message) + '\u001e');
       logger.log('Left organisation group', { organisationId });
     } catch (error) {
       logger.error('Failed to leave organisation', error);
@@ -328,7 +474,7 @@ class WebSocketNotificationService {
         arguments: [message]
       };
 
-      this.ws.send(JSON.stringify(msg));
+      this.ws.send(JSON.stringify(msg) + '\u001e');
       logger.log('Test message sent', { message });
     } catch (error) {
       logger.error('Failed to send test message', error);
@@ -348,7 +494,7 @@ class WebSocketNotificationService {
         arguments: [notificationId]
       };
 
-      this.ws.send(JSON.stringify(message));
+      this.ws.send(JSON.stringify(message) + '\u001e');
       logger.log('Marked notification as read', { notificationId });
     } catch (error) {
       logger.error('Failed to mark notification as read', error);
@@ -368,10 +514,30 @@ class WebSocketNotificationService {
         arguments: []
       };
 
-      this.ws.send(JSON.stringify(message));
+      this.ws.send(JSON.stringify(message) + '\u001e');
       logger.log('Marked all notifications as read');
     } catch (error) {
       logger.error('Failed to mark all notifications as read', error);
+      throw error;
+    }
+  }
+
+  async acknowledgeDelivery(notificationId: string): Promise<void> {
+    try {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        throw new Error('Not connected to WebSocket');
+      }
+
+      const message = {
+        type: 1,
+        target: 'AcknowledgeDelivery',
+        arguments: [notificationId]
+      };
+
+      this.ws.send(JSON.stringify(message) + '\u001e');
+      logger.log('Acknowledged delivery for notification', { notificationId });
+    } catch (error) {
+      logger.error('Failed to acknowledge delivery', error);
       throw error;
     }
   }
@@ -384,6 +550,28 @@ class WebSocketNotificationService {
     // Return cleanup function
     return () => {
       this.messageHandlers.delete(handlerId);
+    };
+  }
+
+  // Register a handler for unread count updates
+  onUnreadCountUpdate(handler: (count: number) => void): () => void {
+    const handlerId = Date.now().toString();
+    this.unreadCountHandlers.set(handlerId, handler);
+    
+    // Return cleanup function
+    return () => {
+      this.unreadCountHandlers.delete(handlerId);
+    };
+  }
+
+  // Register a handler for delivery acknowledgment confirmations
+  onDeliveryAcknowledged(handler: (acknowledgment: DeliveryAcknowledgment) => void): () => void {
+    const handlerId = Date.now().toString();
+    this.deliveryAcknowledgmentHandlers.set(handlerId, handler);
+    
+    // Return cleanup function
+    return () => {
+      this.deliveryAcknowledgmentHandlers.delete(handlerId);
     };
   }
 

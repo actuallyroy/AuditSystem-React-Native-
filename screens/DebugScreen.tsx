@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, Button, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, Button, ScrollView, StyleSheet, TouchableOpacity, Alert } from 'react-native';
 import { storageService } from '../services/StorageService';
+import { authService } from '../services/AuthService';
+import { debugLogger } from '../utils/DebugLogger';
 
 const BASE_WS_URL = 'wss://test.scorptech.co/hubs/notifications';
 const ECHO_URL = 'wss://echo.websocket.events';
@@ -16,6 +18,7 @@ const DebugScreen: React.FC = () => {
   const [useEcho, setUseEcho] = useState(false);
   const [useAuth, setUseAuth] = useState(true);
   const [token, setToken] = useState<string | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   const log = (msg: string) => {
@@ -31,6 +34,62 @@ const DebugScreen: React.FC = () => {
       setToken(null);
     }
   }, [useAuth, useEcho]);
+
+  const testTokenValidation = async () => {
+    try {
+      setIsValidating(true);
+      log('Starting token validation test...');
+      
+      const result = await authService.debugTokenValidation();
+      
+      log(`Token validation result: ${result.success ? 'SUCCESS' : 'FAILED'}`);
+      log(`Network connectivity: ${result.details.isOnline}`);
+      log(`Has token: ${result.details.hasToken}`);
+      log(`Has userId: ${result.details.hasUserId}`);
+      log(`Token length: ${result.details.tokenLength}`);
+      log(`UserId: ${result.details.userId}`);
+      
+      if (result.details.userDetailsEndpoint) {
+        log(`User details endpoint: ${result.details.userDetailsEndpoint.success ? 'SUCCESS' : 'FAILED'} (${result.details.userDetailsEndpoint.status})`);
+        log(`User details response: ${result.details.userDetailsEndpoint.response}`);
+      }
+      
+      if (result.details.healthEndpoint) {
+        log(`Health endpoint: ${result.details.healthEndpoint.success ? 'SUCCESS' : 'FAILED'} (${result.details.healthEndpoint.status})`);
+        log(`Health response: ${result.details.healthEndpoint.response}`);
+      }
+      
+      if (result.details.errors.length > 0) {
+        log('Errors:');
+        result.details.errors.forEach(error => log(`  - ${error}`));
+      }
+      
+      // Show alert with summary
+      Alert.alert(
+        'Token Validation Test',
+        `Result: ${result.success ? 'SUCCESS' : 'FAILED'}\n\nNetwork: ${result.details.isOnline ? 'Online' : 'Offline'}\nToken: ${result.details.hasToken ? 'Present' : 'Missing'}\nUser ID: ${result.details.hasUserId ? 'Present' : 'Missing'}\n\nErrors: ${result.details.errors.length}`,
+        [{ text: 'OK' }]
+      );
+      
+    } catch (error) {
+      log(`Token validation test error: ${error instanceof Error ? error.message : String(error)}`);
+      Alert.alert('Error', `Token validation test failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  const showDebugLogs = () => {
+    const logsString = debugLogger.getLogsAsString();
+    Alert.alert(
+      'Debug Logs',
+      logsString || 'No logs available',
+      [
+        { text: 'Clear Logs', onPress: () => debugLogger.clearLogs() },
+        { text: 'OK' }
+      ]
+    );
+  };
 
   useEffect(() => {
     setLogs([]);
@@ -48,7 +107,7 @@ const DebugScreen: React.FC = () => {
         ws.send('Hello from React Native!');
         log('Sent: Hello from React Native!');
       } else {
-        ws.send('{"protocol":"json","version":1}');
+        ws.send('{"protocol":"json","version":1}');
         log('Sent: {"protocol":"json","version":1}');
       }
     };
@@ -85,6 +144,16 @@ const DebugScreen: React.FC = () => {
           </TouchableOpacity>
         )}
       </View>
+      <View style={styles.buttonRow}>
+        <Button
+          title={isValidating ? 'Validating...' : 'Test Token Validation'}
+          onPress={testTokenValidation}
+          disabled={isValidating}
+        />
+        <TouchableOpacity style={styles.debugButton} onPress={showDebugLogs}>
+          <Text style={styles.debugButtonText}>Debug Logs</Text>
+        </TouchableOpacity>
+      </View>
       {!useEcho && useAuth && (
         <Text style={styles.tokenText}>Token: {maskToken(token)}</Text>
       )}
@@ -109,6 +178,8 @@ const styles = StyleSheet.create({
   authOn: { backgroundColor: '#4CAF50' },
   authOff: { backgroundColor: '#F44336' },
   authButtonText: { color: '#fff', fontWeight: 'bold' },
+  debugButton: { marginLeft: 12, padding: 8, borderRadius: 6, backgroundColor: '#2196F3' },
+  debugButtonText: { color: '#fff', fontWeight: 'bold' },
   tokenText: { fontSize: 10, color: '#888', marginBottom: 4 },
 });
 

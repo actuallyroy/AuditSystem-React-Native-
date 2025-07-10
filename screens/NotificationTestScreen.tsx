@@ -1,349 +1,210 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
-  Alert,
   TextInput,
-  ActivityIndicator
+  ScrollView,
+  Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNotifications } from '../contexts/NotificationContext';
-import { useAuth } from '../contexts/AuthContext';
-import { debugLogger } from '../utils/DebugLogger';
 import WebSocketNotificationService from '../services/WebSocketNotificationService';
-import { storageService } from '../services/StorageService';
-import { networkService } from '../services/NetworkService';
+import { debugLogger } from '../utils/DebugLogger';
 
-const logger = debugLogger;
+const NotificationTestScreen: React.FC = () => {
+  const { state, acknowledgeDelivery } = useNotifications();
+  const { notifications, unreadCount, isConnected, deliveryAcknowledgedCount } = state;
+  const [testMessage, setTestMessage] = useState('');
+  const [selectedNotificationId, setSelectedNotificationId] = useState('');
 
-export const NotificationTestScreen: React.FC = () => {
-  const { state, markAsRead, markAllAsRead, reconnect, getConnectionStats } = useNotifications();
-  const { user } = useAuth();
-  const [customMessage, setCustomMessage] = useState('');
-  const [isReconnecting, setIsReconnecting] = useState(false);
-  const [connectionStats, setConnectionStats] = useState<any>(null);
-  const [isTestingConnectivity, setIsTestingConnectivity] = useState(false);
-  const [connectivityTestResult, setConnectivityTestResult] = useState<any>(null);
-  const [isTestingNetwork, setIsTestingNetwork] = useState(false);
-  const [networkTestResult, setNetworkTestResult] = useState<any>(null);
+  const handleSendTestMessage = async () => {
+    if (!testMessage.trim()) {
+      Alert.alert('Error', 'Please enter a test message');
+      return;
+    }
 
-  // Update connection stats periodically
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setConnectionStats(getConnectionStats());
-    }, 2000); // Update every 2 seconds
-
-    return () => clearInterval(interval);
-  }, [getConnectionStats]);
-
-  const handleReconnect = async () => {
-    setIsReconnecting(true);
     try {
-      await reconnect();
-      Alert.alert('Success', 'Reconnection attempt completed');
+      await WebSocketNotificationService.sendTestMessage(testMessage);
+      setTestMessage('');
+      Alert.alert('Success', 'Test message sent successfully');
     } catch (error) {
-      Alert.alert('Error', 'Reconnection failed');
-      logger.error('Reconnection failed', error);
-    } finally {
-      setIsReconnecting(false);
+      Alert.alert('Error', `Failed to send test message: ${error}`);
+    }
+  };
+
+  const handleManualAcknowledge = async () => {
+    if (!selectedNotificationId) {
+      Alert.alert('Error', 'Please select a notification to acknowledge');
+      return;
+    }
+
+    try {
+      await acknowledgeDelivery(selectedNotificationId);
+      Alert.alert('Success', 'Delivery acknowledgment sent successfully');
+    } catch (error) {
+      Alert.alert('Error', `Failed to acknowledge delivery: ${error}`);
     }
   };
 
   const handleTestConnectivity = async () => {
-    setIsTestingConnectivity(true);
     try {
-      // Get the current auth token for testing
-      const token = await storageService.getAuthToken();
-      const result = await WebSocketNotificationService.testWebSocketConnectivity(token || undefined);
-      setConnectivityTestResult(result);
-      
+      const result = await WebSocketNotificationService.testWebSocketConnectivity();
       if (result.success) {
-        Alert.alert('Success', 'WebSocket connectivity test passed!');
+        Alert.alert('Success', 'WebSocket connectivity test passed');
       } else {
-        Alert.alert('Error', `WebSocket connectivity test failed: ${result.error}`);
+        Alert.alert('Error', `Connectivity test failed: ${result.error}`);
       }
     } catch (error) {
-      Alert.alert('Error', 'Connectivity test failed');
-      logger.error('Connectivity test failed', error);
-    } finally {
-      setIsTestingConnectivity(false);
+      Alert.alert('Error', `Connectivity test failed: ${error}`);
     }
   };
 
-  const handleTestNetwork = async () => {
-    setIsTestingNetwork(true);
-    try {
-      // Test emulator host IP first, then remote domain
-      let result = await networkService.testWebSocketServerConnectivity('192.168.1.4');
-      
-      if (!result.success) {
-        // Try remote domain as fallback
-        result = await networkService.testWebSocketServerConnectivity('test.scorptech.co');
-      }
-      
-      setNetworkTestResult(result);
-      
-      if (result.success) {
-        Alert.alert('Success', 'Network connectivity test passed!');
-      } else {
-        Alert.alert('Error', `Network connectivity test failed: ${result.error}`);
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Network test failed');
-      logger.error('Network test failed', error);
-    } finally {
-      setIsTestingNetwork(false);
-    }
-  };
-
-  const handleMarkAsRead = (notificationId: string) => {
-    markAsRead(notificationId);
-    Alert.alert('Success', 'Notification marked as read');
-  };
-
-  const handleMarkAllAsRead = () => {
-    markAllAsRead();
-    Alert.alert('Success', 'All notifications marked as read');
-  };
-
-  const formatUptime = (uptime: number) => {
-    const seconds = Math.floor(uptime / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-    
-    if (hours > 0) {
-      return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
-    } else if (minutes > 0) {
-      return `${minutes}m ${seconds % 60}s`;
-    } else {
-      return `${seconds}s`;
-    }
-  };
-
-  const formatLastHeartbeat = (lastHeartbeat: Date | null) => {
-    if (!lastHeartbeat) return 'Never';
-    const now = new Date();
-    const diff = now.getTime() - lastHeartbeat.getTime();
-    const seconds = Math.floor(diff / 1000);
-    return `${seconds}s ago`;
-  };
-
-  const getConnectionStatusColor = () => {
-    if (state.isConnected) return '#4CAF50';
-    if (state.error) return '#F44336';
-    return '#FF9800';
-  };
-
-  const getConnectionStatusText = () => {
-    if (state.isConnected) return 'Connected';
-    if (state.error) return 'Error';
-    return 'Disconnected';
+  const getConnectionStats = () => {
+    return WebSocketNotificationService.getConnectionStats();
   };
 
   return (
-    <ScrollView style={styles.container}>
-      <Text style={styles.title}>SignalR Notification Test</Text>
+    <SafeAreaView style={styles.container}>
+      <ScrollView style={styles.scrollView}>
+        <Text style={styles.title}>Notification Test Screen</Text>
 
-      {/* Connection Status */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Connection Status</Text>
-        <View style={styles.statusContainer}>
-          <View style={[styles.statusIndicator, { backgroundColor: getConnectionStatusColor() }]} />
-          <Text style={styles.statusText}>{getConnectionStatusText()}</Text>
+        {/* Connection Status */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Connection Status</Text>
+          <View style={styles.statusRow}>
+            <Text style={styles.statusLabel}>WebSocket:</Text>
+            <Text style={[styles.statusValue, { color: isConnected ? '#00CC00' : '#FF4444' }]}>
+              {isConnected ? 'Connected' : 'Disconnected'}
+            </Text>
+          </View>
+          <View style={styles.statusRow}>
+            <Text style={styles.statusLabel}>Unread Count:</Text>
+            <Text style={styles.statusValue}>{unreadCount}</Text>
+          </View>
+          <View style={styles.statusRow}>
+            <Text style={styles.statusLabel}>Delivered Count:</Text>
+            <Text style={styles.statusValue}>{deliveryAcknowledgedCount}</Text>
+          </View>
+          <View style={styles.statusRow}>
+            <Text style={styles.statusLabel}>Total Notifications:</Text>
+            <Text style={styles.statusValue}>{notifications.length}</Text>
+          </View>
         </View>
-        
-        {state.error && (
-          <Text style={styles.errorText}>Error: {state.error}</Text>
-        )}
 
-        {state.isConnected && connectionStats && (
-          <View style={styles.statsContainer}>
-            <Text style={styles.statsTitle}>Connection Statistics:</Text>
-            <Text style={styles.statsText}>Uptime: {formatUptime(connectionStats.uptime)}</Text>
-            <Text style={styles.statsText}>Reconnect Attempts: {connectionStats.reconnectAttempts}</Text>
-            <Text style={styles.statsText}>Last Heartbeat: {formatLastHeartbeat(connectionStats.lastHeartbeat)}</Text>
-            <Text style={styles.statsText}>Pending Messages: {connectionStats.pendingMessages}</Text>
-          </View>
-        )}
-      </View>
-
-      {/* Connection Controls */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Connection Controls</Text>
-        <TouchableOpacity
-          style={[styles.button, styles.reconnectButton]}
-          onPress={handleReconnect}
-          disabled={isReconnecting}
-        >
-          {isReconnecting ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Reconnect</Text>
-          )}
-        </TouchableOpacity>
-        
-        <TouchableOpacity
-          style={[styles.button, styles.testButton]}
-          onPress={handleTestConnectivity}
-          disabled={isTestingConnectivity}
-        >
-          {isTestingConnectivity ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Test WebSocket Connectivity</Text>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.button, styles.testButton]}
-          onPress={handleTestNetwork}
-          disabled={isTestingNetwork}
-        >
-          {isTestingNetwork ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Test Network Connectivity</Text>
-          )}
-        </TouchableOpacity>
-
-        {connectivityTestResult && (
-          <View style={styles.testResultContainer}>
-            <Text style={styles.testResultTitle}>Connectivity Test Result:</Text>
-            <Text style={[
-              styles.testResultText,
-              { color: connectivityTestResult.success ? '#4CAF50' : '#F44336' }
-            ]}>
-              {connectivityTestResult.success ? 'PASSED' : 'FAILED'}
-            </Text>
-            {connectivityTestResult.error && (
-              <Text style={styles.testResultError}>Error: {connectivityTestResult.error}</Text>
-            )}
-            {connectivityTestResult.details && (
-              <Text style={styles.testResultDetails}>
-                Details: {JSON.stringify(connectivityTestResult.details, null, 2)}
+        {/* Connection Stats */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Connection Statistics</Text>
+          {Object.entries(getConnectionStats()).map(([key, value]) => (
+            <View key={key} style={styles.statusRow}>
+              <Text style={styles.statusLabel}>{key}:</Text>
+              <Text style={styles.statusValue}>
+                {value instanceof Date ? value.toLocaleTimeString() : String(value)}
               </Text>
-            )}
-            {connectivityTestResult.testedUrls && (
-              <Text style={styles.testResultDetails}>
-                Tested URLs: {connectivityTestResult.testedUrls.join(', ')}
-              </Text>
-            )}
+            </View>
+          ))}
+        </View>
+
+        {/* Test Actions */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Test Actions</Text>
+          
+          <TouchableOpacity style={styles.button} onPress={handleTestConnectivity}>
+            <Text style={styles.buttonText}>Test Connectivity</Text>
+          </TouchableOpacity>
+
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={styles.input}
+              placeholder="Enter test message"
+              value={testMessage}
+              onChangeText={setTestMessage}
+              multiline
+            />
+            <TouchableOpacity style={styles.button} onPress={handleSendTestMessage}>
+              <Text style={styles.buttonText}>Send Test Message</Text>
+            </TouchableOpacity>
           </View>
-        )}
+        </View>
 
-        {networkTestResult && (
-          <View style={styles.testResultContainer}>
-            <Text style={styles.testResultTitle}>Network Test Result:</Text>
-            <Text style={[
-              styles.testResultText,
-              { color: networkTestResult.success ? '#4CAF50' : '#F44336' }
-            ]}>
-              {networkTestResult.success ? 'PASSED' : 'FAILED'}
-            </Text>
-            {networkTestResult.error && (
-              <Text style={styles.testResultError}>Error: {networkTestResult.error}</Text>
-            )}
-            {networkTestResult.details && (
-              <Text style={styles.testResultDetails}>
-                Details: {JSON.stringify(networkTestResult.details, null, 2)}
-              </Text>
-            )}
-          </View>
-        )}
-      </View>
-
-      {/* User Info */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>User Information</Text>
-        <Text style={styles.infoText}>User ID: {user?.userId || 'Not available'}</Text>
-        <Text style={styles.infoText}>Username: {user?.username || 'Not available'}</Text>
-        <Text style={styles.infoText}>Authenticated: {user ? 'Yes' : 'No'}</Text>
-      </View>
-
-      {/* Notification Controls */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Notification Controls</Text>
-        <TouchableOpacity
-          style={[styles.button, styles.markAllButton]}
-          onPress={handleMarkAllAsRead}
-        >
-          <Text style={styles.buttonText}>Mark All as Read</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Notifications List */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>
-          Notifications ({state.notifications.length})
-        </Text>
-        <Text style={styles.infoText}>Unread: {state.unreadCount}</Text>
-        
-        {state.notifications.length === 0 ? (
-          <Text style={styles.emptyText}>No notifications received</Text>
-        ) : (
-          state.notifications.map((notification, index) => (
-            <View key={notification.id} style={styles.notificationItem}>
-              <View style={styles.notificationHeader}>
-                <Text style={styles.notificationTitle}>{notification.title}</Text>
-                <Text style={styles.notificationType}>{notification.type}</Text>
-              </View>
-              <Text style={styles.notificationMessage}>{notification.message}</Text>
-              <View style={styles.notificationFooter}>
-                <Text style={styles.notificationTime}>
-                  {new Date(notification.timestamp).toLocaleString()}
+        {/* Manual Delivery Acknowledgment */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Manual Delivery Acknowledgment</Text>
+          
+          <Text style={styles.subtitle}>Select a notification to acknowledge:</Text>
+          <ScrollView style={styles.notificationSelector} horizontal>
+            {notifications.map((notification) => (
+              <TouchableOpacity
+                key={notification.id}
+                style={[
+                  styles.notificationOption,
+                  selectedNotificationId === notification.id && styles.selectedNotification,
+                  notification.deliveryAcknowledged && styles.acknowledgedNotification
+                ]}
+                onPress={() => setSelectedNotificationId(notification.id)}
+              >
+                <Text style={styles.notificationOptionText} numberOfLines={1}>
+                  {notification.title}
                 </Text>
-                <View style={styles.notificationActions}>
-                  {!notification.isRead && (
-                    <TouchableOpacity
-                      style={styles.markReadButton}
-                      onPress={() => handleMarkAsRead(notification.id)}
-                    >
-                      <Text style={styles.markReadButtonText}>Mark Read</Text>
-                    </TouchableOpacity>
-                  )}
-                  <Text style={[
-                    styles.readStatus,
-                    { color: notification.isRead ? '#4CAF50' : '#FF9800' }
-                  ]}>
-                    {notification.isRead ? 'Read' : 'Unread'}
-                  </Text>
-                </View>
+                <Text style={styles.notificationOptionStatus}>
+                  {notification.deliveryAcknowledged ? '✓' : '⏳'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          {selectedNotificationId && (
+            <TouchableOpacity style={styles.button} onPress={handleManualAcknowledge}>
+              <Text style={styles.buttonText}>Acknowledge Delivery</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Recent Notifications */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Recent Notifications</Text>
+          {notifications.slice(0, 5).map((notification) => (
+            <View key={notification.id} style={styles.notificationItem}>
+              <Text style={styles.notificationTitle}>{notification.title}</Text>
+              <Text style={styles.notificationMessage}>{notification.message}</Text>
+              <View style={styles.notificationMeta}>
+                <Text style={styles.notificationTime}>
+                  {new Date(notification.timestamp).toLocaleTimeString()}
+                </Text>
+                <Text style={[
+                  styles.deliveryStatus,
+                  { color: notification.deliveryAcknowledged ? '#00CC00' : '#FF8800' }
+                ]}>
+                  {notification.deliveryAcknowledged ? '✓ Delivered' : '⏳ Pending'}
+                </Text>
               </View>
             </View>
-          ))
-        )}
-      </View>
-
-      {/* Last Update */}
-      {state.lastUpdate && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Last Update</Text>
-          <Text style={styles.infoText}>
-            {state.lastUpdate.toLocaleString()}
-          </Text>
+          ))}
         </View>
-      )}
-    </ScrollView>
+      </ScrollView>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#f5f7fa',
+  },
+  scrollView: {
+    flex: 1,
     padding: 16,
   },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
-    textAlign: 'center',
+    color: '#1a1a1a',
     marginBottom: 20,
-    color: '#333',
+    textAlign: 'center',
   },
   section: {
-    backgroundColor: '#fff',
+    backgroundColor: '#ffffff',
     borderRadius: 8,
     padding: 16,
     marginBottom: 16,
@@ -355,169 +216,117 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
+    fontWeight: '600',
+    color: '#1a1a1a',
     marginBottom: 12,
-    color: '#333',
   },
-  statusContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  subtitle: {
+    fontSize: 14,
+    color: '#666666',
     marginBottom: 8,
   },
-  statusIndicator: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginRight: 8,
-  },
-  statusText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-  },
-  errorText: {
-    color: '#F44336',
-    fontSize: 14,
-    marginTop: 8,
-  },
-  statsContainer: {
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 6,
-  },
-  statsTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 8,
-    color: '#333',
-  },
-  statsText: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 4,
-  },
-  button: {
-    padding: 12,
-    borderRadius: 6,
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  reconnectButton: {
-    backgroundColor: '#2196F3',
-  },
-  testButton: {
-    backgroundColor: '#9C27B0',
-  },
-  markAllButton: {
-    backgroundColor: '#4CAF50',
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 4,
-  },
-  emptyText: {
-    fontSize: 14,
-    color: '#999',
-    textAlign: 'center',
-    fontStyle: 'italic',
-    marginTop: 20,
-  },
-  notificationItem: {
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 6,
-    padding: 12,
-    marginBottom: 8,
-    backgroundColor: '#fafafa',
-  },
-  notificationHeader: {
+  statusRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    paddingVertical: 4,
+  },
+  statusLabel: {
+    fontSize: 14,
+    color: '#666666',
+  },
+  statusValue: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#1a1a1a',
+  },
+  button: {
+    backgroundColor: '#0066CC',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+    marginVertical: 4,
+  },
+  buttonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  inputContainer: {
+    marginTop: 8,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#e1e5e9',
+    borderRadius: 6,
+    padding: 12,
+    marginBottom: 8,
+    fontSize: 14,
+    backgroundColor: '#ffffff',
+    minHeight: 60,
+  },
+  notificationSelector: {
+    marginBottom: 12,
+  },
+  notificationOption: {
+    backgroundColor: '#f8f9fa',
+    borderWidth: 1,
+    borderColor: '#e1e5e9',
+    borderRadius: 6,
+    padding: 8,
+    marginRight: 8,
+    minWidth: 120,
+    alignItems: 'center',
+  },
+  selectedNotification: {
+    borderColor: '#0066CC',
+    backgroundColor: '#e6f3ff',
+  },
+  acknowledgedNotification: {
+    borderColor: '#00CC00',
+    backgroundColor: '#f0fff0',
+  },
+  notificationOptionText: {
+    fontSize: 12,
+    color: '#1a1a1a',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  notificationOptionStatus: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  notificationItem: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 6,
+    padding: 12,
     marginBottom: 8,
   },
   notificationTitle: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
-    color: '#333',
-    flex: 1,
-  },
-  notificationType: {
-    fontSize: 12,
-    color: '#666',
-    backgroundColor: '#e0e0e0',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
+    color: '#1a1a1a',
+    marginBottom: 4,
   },
   notificationMessage: {
-    fontSize: 14,
-    color: '#666',
+    fontSize: 12,
+    color: '#666666',
     marginBottom: 8,
   },
-  notificationFooter: {
+  notificationMeta: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
   notificationTime: {
-    fontSize: 12,
-    color: '#999',
+    fontSize: 11,
+    color: '#999999',
   },
-  notificationActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  markReadButton: {
-    backgroundColor: '#FF9800',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    marginRight: 8,
-  },
-  markReadButtonText: {
-    color: '#fff',
-    fontSize: 12,
+  deliveryStatus: {
+    fontSize: 11,
     fontWeight: '500',
   },
-  readStatus: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  testResultContainer: {
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-  },
-  testResultTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 8,
-    color: '#333',
-  },
-  testResultText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  testResultError: {
-    fontSize: 14,
-    color: '#F44336',
-    marginBottom: 8,
-  },
-  testResultDetails: {
-    fontSize: 12,
-    color: '#666',
-    fontFamily: 'monospace',
-  },
-}); 
+});
+
+export default NotificationTestScreen; 

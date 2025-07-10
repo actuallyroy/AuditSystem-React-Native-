@@ -1,8 +1,10 @@
 import React, { createContext, useContext, useReducer, useEffect, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
-import WebSocketNotificationService, { WebSocketConnection } from '../services/WebSocketNotificationService';
+import WebSocketNotificationService, { WebSocketConnection, DeliveryAcknowledgment } from '../services/WebSocketNotificationService';
+import PushNotificationService from '../services/PushNotificationService';
 import { useAuth } from './AuthContext';
 import { debugLogger } from '../utils/DebugLogger';
+import { authService } from '../services/AuthService'; // Added import for authService
 
 const logger = debugLogger;
 
@@ -16,6 +18,8 @@ export interface Notification {
   timestamp: string;
   isRead: boolean;
   userId: string;
+  deliveryAcknowledged?: boolean;
+  acknowledgedAt?: string;
 }
 
 // State interface
@@ -31,6 +35,7 @@ interface NotificationState {
   };
   lastUpdate: Date | null;
   error: string | null;
+  deliveryAcknowledgedCount: number;
 }
 
 // Action types
@@ -42,8 +47,11 @@ type NotificationAction =
   | { type: 'MARK_AS_READ'; payload: string }
   | { type: 'MARK_ALL_AS_READ' }
   | { type: 'DELETE_NOTIFICATION'; payload: string }
+  | { type: 'SET_UNREAD_COUNT'; payload: number }
+  | { type: 'RECALCULATE_UNREAD_COUNT' }
   | { type: 'SET_ERROR'; payload: string | null }
-  | { type: 'CLEAR_ERROR' };
+  | { type: 'CLEAR_ERROR' }
+  | { type: 'DELIVERY_ACKNOWLEDGED'; payload: DeliveryAcknowledgment };
 
 // Initial state
 const initialState: NotificationState = {
@@ -57,7 +65,8 @@ const initialState: NotificationState = {
     pendingMessages: 0
   },
   lastUpdate: null,
-  error: null
+  error: null,
+  deliveryAcknowledgedCount: 0
 };
 
 // Reducer
@@ -79,13 +88,27 @@ function notificationReducer(state: NotificationState, action: NotificationActio
     case 'ADD_NOTIFICATION':
       const existingIndex = state.notifications.findIndex(n => n.id === action.payload.id);
       if (existingIndex >= 0) {
-        // Update existing notification
+        // Update existing notification - don't change unread count
         const updatedNotifications = [...state.notifications];
+        const existingNotification = updatedNotifications[existingIndex];
         updatedNotifications[existingIndex] = action.payload;
+        
+        // Only update unread count if the read status actually changed
+        let newUnreadCount = state.unreadCount;
+        if (existingNotification.isRead !== action.payload.isRead) {
+          if (action.payload.isRead) {
+            // Notification was marked as read
+            newUnreadCount = Math.max(0, state.unreadCount - 1);
+          } else {
+            // Notification was marked as unread
+            newUnreadCount = state.unreadCount + 1;
+          }
+        }
+        
         return {
           ...state,
           notifications: updatedNotifications,
-          unreadCount: state.unreadCount + (action.payload.isRead ? 0 : 1),
+          unreadCount: newUnreadCount,
           lastUpdate: new Date()
         };
       } else {
@@ -136,6 +159,33 @@ function notificationReducer(state: NotificationState, action: NotificationActio
         unreadCount: state.unreadCount - (notificationToDelete?.isRead ? 0 : 1)
       };
 
+    case 'SET_UNREAD_COUNT':
+      return {
+        ...state,
+        unreadCount: action.payload
+      };
+
+    case 'RECALCULATE_UNREAD_COUNT':
+      return {
+        ...state,
+        unreadCount: state.notifications.filter(n => !n.isRead).length
+      };
+
+    case 'DELIVERY_ACKNOWLEDGED':
+      return {
+        ...state,
+        notifications: state.notifications.map(notification =>
+          notification.id === action.payload.notificationId
+            ? { 
+                ...notification, 
+                deliveryAcknowledged: true,
+                acknowledgedAt: action.payload.acknowledgedAt
+              }
+            : notification
+        ),
+        deliveryAcknowledgedCount: state.deliveryAcknowledgedCount + 1
+      };
+
     case 'SET_ERROR':
       return {
         ...state,
@@ -156,12 +206,14 @@ function notificationReducer(state: NotificationState, action: NotificationActio
 // Context interface
 interface NotificationContextType {
   state: NotificationState;
-  markAsRead: (id: string) => void;
-  markAllAsRead: () => void;
-  deleteNotification: (id: string) => void;
+  markAsRead: (id: string) => Promise<void>;
+  markAllAsRead: () => Promise<void>;
+  deleteNotification: (id: string) => Promise<void>;
   refreshNotifications: () => void;
   reconnect: () => Promise<void>;
   getConnectionStats: () => any;
+  recalculateUnreadCount: () => void;
+  acknowledgeDelivery: (notificationId: string) => Promise<void>;
 }
 
 // Create context
@@ -170,14 +222,55 @@ const NotificationContext = createContext<NotificationContextType | undefined>(u
 // Provider component
 export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, dispatch] = useReducer(notificationReducer, initialState);
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, loading, tokenValidating } = useAuth();
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const connectionCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const notificationHandlerRef = useRef<(() => void) | null>(null);
+  const unreadCountHandlerRef = useRef<(() => void) | null>(null);
+  const deliveryAcknowledgmentHandlerRef = useRef<(() => void) | null>(null);
+  const pushNotificationResponseListenerRef = useRef<(() => void) | null>(null);
+  const pushNotificationReceivedListenerRef = useRef<(() => void) | null>(null);
+  // No need for useRef since authService is already a singleton
+
+  // Initialize push notifications
+  useEffect(() => {
+    const initializePushNotifications = async () => {
+      try {
+        await PushNotificationService.initialize();
+        
+        // Set up notification response listener (when user taps notification)
+        if (pushNotificationResponseListenerRef.current) {
+          pushNotificationResponseListenerRef.current();
+        }
+        pushNotificationResponseListenerRef.current = PushNotificationService.setupNotificationResponseListener();
+        
+        // Set up notification received listener (for foreground notifications)
+        if (pushNotificationReceivedListenerRef.current) {
+          pushNotificationReceivedListenerRef.current();
+        }
+        pushNotificationReceivedListenerRef.current = PushNotificationService.setupNotificationReceivedListener();
+        
+        logger.log('Push notifications initialized');
+      } catch (error) {
+        logger.error('Failed to initialize push notifications', error);
+      }
+    };
+
+    initializePushNotifications();
+
+    return () => {
+      if (pushNotificationResponseListenerRef.current) {
+        pushNotificationResponseListenerRef.current();
+      }
+      if (pushNotificationReceivedListenerRef.current) {
+        pushNotificationReceivedListenerRef.current();
+      }
+    };
+  }, []);
 
   // Handle authentication changes
   useEffect(() => {
-    if (isAuthenticated && user?.token) {
+    if (isAuthenticated && user?.token && !loading && !tokenValidating) {
       connectToSignalR();
     } else {
       disconnectFromSignalR();
@@ -186,7 +279,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     return () => {
       disconnectFromSignalR();
     };
-  }, [isAuthenticated, user?.token]);
+  }, [isAuthenticated, user?.token, loading, tokenValidating]);
 
   // Handle app state changes
   useEffect(() => {
@@ -194,9 +287,13 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
         // App has come to the foreground
         logger.log('App came to foreground, checking SignalR connection');
-        if (isAuthenticated && user?.token) {
+        if (isAuthenticated && user?.token && !loading && !tokenValidating) {
           connectToSignalR();
         }
+        // Clear badge when app comes to foreground
+        PushNotificationService.clearBadge().catch((error) => {
+          logger.error('Failed to clear badge on app foreground', error);
+        });
       } else if (appStateRef.current === 'active' && nextAppState.match(/inactive|background/)) {
         // App has gone to the background
         logger.log('App went to background');
@@ -207,7 +304,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
     const subscription = AppState.addEventListener('change', handleAppStateChange);
     return () => subscription?.remove();
-  }, [isAuthenticated, user?.token]);
+  }, [isAuthenticated, user?.token, loading, tokenValidating]);
 
   // Set up periodic connection stats updates
   useEffect(() => {
@@ -233,20 +330,23 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
         return;
       }
 
+      // Additional token validation before connecting
+      if (tokenValidating) {
+        logger.log('Token is currently being validated, skipping SignalR connection');
+        return;
+      }
+
       logger.log('Connecting to SignalR');
       
-      // Connect to WebSocket
+      // Validate token before attempting connection
+      const isTokenValid = await authService.testTokenValidity();
+      if (!isTokenValid) {
+        logger.warn('Token validation failed before SignalR connection, skipping connection');
+        return;
+      }
+      
+      // Connect to WebSocket (auto-subscribes to user notifications and joins organisation)
       await WebSocketNotificationService.connect(user.token);
-      
-      // Subscribe to user notifications
-      if (user.userId) {
-        await WebSocketNotificationService.subscribeToUser(user.userId);
-      }
-      
-      // Join organisation group if available
-      if (user.organisationId) {
-        await WebSocketNotificationService.joinOrganisation(user.organisationId);
-      }
 
       // Set up notification handler
       if (notificationHandlerRef.current) {
@@ -261,13 +361,44 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
           title: notificationMessage.title,
           message: notificationMessage.message,
           timestamp: notificationMessage.timestamp,
-          isRead: notificationMessage.isRead,
-          userId: user?.userId || ''
+          isRead: notificationMessage.isRead || false,
+          userId: notificationMessage.userId || user?.userId || '',
+          deliveryAcknowledged: false
         };
         dispatch({ type: 'ADD_NOTIFICATION', payload: notification });
+
+        // Show push notification with badge
+        showPushNotification(notificationMessage);
       });
       
       notificationHandlerRef.current = cleanup;
+
+      // Set up unread count handler
+      if (unreadCountHandlerRef.current) {
+        unreadCountHandlerRef.current(); // Cleanup previous handler
+      }
+      
+      const unreadCountCleanup = WebSocketNotificationService.onUnreadCountUpdate((count: number) => {
+        dispatch({ type: 'SET_UNREAD_COUNT', payload: count });
+        // Update badge count to match unread count
+        PushNotificationService.updateBadgeCount(count).catch((error) => {
+          logger.error('Failed to update badge count', error);
+        });
+      });
+      
+      unreadCountHandlerRef.current = unreadCountCleanup;
+
+      // Set up delivery acknowledgment handler
+      if (deliveryAcknowledgmentHandlerRef.current) {
+        deliveryAcknowledgmentHandlerRef.current(); // Cleanup previous handler
+      }
+      
+      const deliveryAcknowledgmentCleanup = WebSocketNotificationService.onDeliveryAcknowledged((acknowledgment: DeliveryAcknowledgment) => {
+        dispatch({ type: 'DELIVERY_ACKNOWLEDGED', payload: acknowledgment });
+        logger.log('Delivery acknowledgment received', acknowledgment);
+      });
+      
+      deliveryAcknowledgmentHandlerRef.current = deliveryAcknowledgmentCleanup;
 
       dispatch({ type: 'SET_CONNECTED', payload: true });
       dispatch({ type: 'CLEAR_ERROR' });
@@ -281,12 +412,52 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     }
   };
 
+  const showPushNotification = async (notificationMessage: any) => {
+    try {
+      // Determine priority based on notification type
+      let priority: 'default' | 'normal' | 'high' = 'default';
+      if (notificationMessage.priority === 'urgent') {
+        priority = 'high';
+      } else if (notificationMessage.priority === 'high') {
+        priority = 'high';
+      }
+
+      await PushNotificationService.showNotification({
+        notificationId: notificationMessage.notificationId,
+        type: notificationMessage.type,
+        title: notificationMessage.title,
+        message: notificationMessage.message,
+        data: {
+          userId: notificationMessage.userId,
+          organisationId: notificationMessage.organisationId,
+          timestamp: notificationMessage.timestamp,
+        },
+        priority,
+      });
+
+      logger.log('Push notification shown for new notification', {
+        notificationId: notificationMessage.notificationId,
+        title: notificationMessage.title,
+      });
+    } catch (error) {
+      logger.error('Failed to show push notification', error);
+    }
+  };
+
   const disconnectFromSignalR = () => {
     try {
       WebSocketNotificationService.disconnect();
       if (notificationHandlerRef.current) {
         notificationHandlerRef.current();
         notificationHandlerRef.current = null;
+      }
+      if (unreadCountHandlerRef.current) {
+        unreadCountHandlerRef.current();
+        unreadCountHandlerRef.current = null;
+      }
+      if (deliveryAcknowledgmentHandlerRef.current) {
+        deliveryAcknowledgmentHandlerRef.current();
+        deliveryAcknowledgmentHandlerRef.current = null;
       }
       dispatch({ type: 'SET_CONNECTED', payload: false });
       logger.log('Disconnected from WebSocket');
@@ -311,31 +482,35 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       // Update local state immediately
       dispatch({ type: 'MARK_AS_READ', payload: id });
       
-      // TODO: Call API to mark as read on server
-      // await notificationService.markAsRead(id);
+      // Send message to server via WebSocket
+      await WebSocketNotificationService.markNotificationAsRead(id);
       
     } catch (error) {
       logger.error('Failed to mark notification as read', error);
     }
   };
 
-  const markAllAsRead = () => {
+  const markAllAsRead = async () => {
     try {
       dispatch({ type: 'MARK_ALL_AS_READ' });
+
+      // Clear badge when all notifications are marked as read
+      await PushNotificationService.clearBadge();
       
-      // TODO: Call API to mark all as read on server
-      // await notificationService.markAllAsRead();
+      // Send message to server via WebSocket
+      await WebSocketNotificationService.markAllNotificationsAsRead();
       
     } catch (error) {
       logger.error('Failed to mark all notifications as read', error);
     }
   };
 
-  const deleteNotification = (id: string) => {
+  const deleteNotification = async (id: string) => {
     try {
       dispatch({ type: 'DELETE_NOTIFICATION', payload: id });
       
-      // TODO: Call API to delete notification on server
+      // Note: There's no WebSocket method for deleting notifications in the protocol
+      // This would typically be done via REST API
       // await notificationService.deleteNotification(id);
       
     } catch (error) {
@@ -352,6 +527,19 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     return WebSocketNotificationService.getConnectionStats();
   };
 
+  const recalculateUnreadCount = () => {
+    dispatch({ type: 'RECALCULATE_UNREAD_COUNT' });
+  };
+
+  const acknowledgeDelivery = async (notificationId: string) => {
+    try {
+      await WebSocketNotificationService.acknowledgeDelivery(notificationId);
+      logger.log('Delivery acknowledgment sent for notification', { notificationId });
+    } catch (error) {
+      logger.error('Failed to acknowledge delivery', error);
+    }
+  };
+
   const value: NotificationContextType = {
     state,
     markAsRead,
@@ -360,6 +548,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     refreshNotifications,
     reconnect,
     getConnectionStats,
+    recalculateUnreadCount,
+    acknowledgeDelivery,
   };
 
   return (

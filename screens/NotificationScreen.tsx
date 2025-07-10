@@ -17,17 +17,15 @@ interface NotificationScreenProps {
 }
 
 const NotificationScreen: React.FC<NotificationScreenProps> = ({ navigation }) => {
-  const {
-    notifications,
-    unreadCount,
-    markAsRead,
-    markAllAsRead,
-    clearNotifications,
-    connectionStats,
-  } = useNotifications();
+  const { state, markAsRead, markAllAsRead, deleteNotification } = useNotifications();
+  const { notifications, unreadCount, connectionStats, isConnected, deliveryAcknowledgedCount } = state;
 
-  const handleMarkAsRead = (notificationId: string) => {
-    markAsRead(notificationId);
+  const handleMarkAsRead = async (notificationId: string) => {
+    try {
+      await markAsRead(notificationId);
+    } catch (error) {
+      console.error('Failed to mark notification as read:', error);
+    }
   };
 
   const handleMarkAllAsRead = () => {
@@ -36,7 +34,13 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({ navigation }) =
       'Are you sure you want to mark all notifications as read?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Mark All Read', onPress: markAllAsRead },
+        { text: 'Mark All Read', onPress: async () => {
+          try {
+            await markAllAsRead();
+          } catch (error) {
+            console.error('Failed to mark all as read:', error);
+          }
+        }},
       ]
     );
   };
@@ -47,7 +51,12 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({ navigation }) =
       'Are you sure you want to clear all notifications? This action cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Clear All', style: 'destructive', onPress: clearNotifications },
+        { text: 'Clear All', style: 'destructive', onPress: () => {
+          // Clear all notifications by deleting them one by one
+          notifications.forEach(notification => {
+            deleteNotification(notification.id);
+          });
+        }},
       ]
     );
   };
@@ -70,6 +79,7 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({ navigation }) =
   const getTypeIcon = (type: string) => {
     switch (type) {
       case 'assignment':
+      case 'audit_assigned':
         return '📋';
       case 'audit_completed':
         return '✅';
@@ -78,6 +88,7 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({ navigation }) =
       case 'audit_rejected':
         return '❌';
       case 'system':
+      case 'system_alert':
         return '🔔';
       case 'test':
         return '🧪';
@@ -112,9 +123,9 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({ navigation }) =
     <TouchableOpacity
       style={[
         styles.notificationItem,
-        !item.read && styles.unreadNotification,
+        !item.isRead && styles.unreadNotification,
       ]}
-      onPress={() => handleMarkAsRead(item.notificationId)}
+      onPress={() => handleMarkAsRead(item.id)}
     >
       <View style={styles.notificationHeader}>
         <Text style={styles.typeIcon}>{getTypeIcon(item.type)}</Text>
@@ -127,15 +138,34 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({ navigation }) =
         <View
           style={[
             styles.priorityIndicator,
-            { backgroundColor: getPriorityColor(item.priority) },
+            { backgroundColor: getPriorityColor(item.priority || 'medium') },
           ]}
         />
       </View>
       <Text style={styles.notificationMessage}>{item.message}</Text>
-      {item.metadata && Object.keys(item.metadata).length > 0 && (
+      
+      {/* Delivery acknowledgment status */}
+      <View style={styles.deliveryStatusContainer}>
+        {item.deliveryAcknowledged ? (
+          <View style={styles.deliveryAcknowledged}>
+            <Text style={styles.deliveryStatusText}>✓ Delivered</Text>
+            {item.acknowledgedAt && (
+              <Text style={styles.acknowledgmentTime}>
+                {formatTimestamp(item.acknowledgedAt)}
+              </Text>
+            )}
+          </View>
+        ) : (
+          <View style={styles.deliveryPending}>
+            <Text style={styles.deliveryStatusText}>⏳ Pending delivery</Text>
+          </View>
+        )}
+      </View>
+      
+      {item.data && Object.keys(item.data).length > 0 && (
         <View style={styles.metadataContainer}>
           <Text style={styles.metadataTitle}>Additional Info:</Text>
-          {Object.entries(item.metadata).map(([key, value]) => (
+          {Object.entries(item.data).map(([key, value]) => (
             <Text key={key} style={styles.metadataItem}>
               {key}: {String(value)}
             </Text>
@@ -154,13 +184,11 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({ navigation }) =
       </Text>
       <View style={styles.connectionStatus}>
         <Text style={styles.connectionStatusText}>
-          SignalR Status: {connectionStats.isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+          WebSocket Status: {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
         </Text>
-        {connectionStats.connectionId && (
-          <Text style={styles.connectionId}>
-            ID: {connectionStats.connectionId}
-          </Text>
-        )}
+        <Text style={styles.connectionId}>
+          Uptime: {Math.floor(connectionStats.uptime / 1000)}s | Reconnects: {connectionStats.reconnectAttempts}
+        </Text>
       </View>
     </View>
   );
@@ -183,16 +211,23 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({ navigation }) =
         </View>
       </View>
 
-      {unreadCount > 0 && (
-        <View style={styles.unreadBadge}>
-          <Text style={styles.unreadBadgeText}>{unreadCount} unread</Text>
-        </View>
-      )}
+      <View style={styles.statusBar}>
+        {unreadCount > 0 && (
+          <View style={styles.unreadBadge}>
+            <Text style={styles.unreadBadgeText}>{unreadCount} unread</Text>
+          </View>
+        )}
+        {deliveryAcknowledgedCount > 0 && (
+          <View style={styles.deliveryBadge}>
+            <Text style={styles.deliveryBadgeText}>{deliveryAcknowledgedCount} delivered</Text>
+          </View>
+        )}
+      </View>
 
       <FlatList
         data={notifications}
         renderItem={renderNotification}
-        keyExtractor={(item) => item.notificationId}
+        keyExtractor={(item) => item.id}
         style={styles.notificationList}
         contentContainerStyle={
           notifications.length === 0 ? styles.emptyListContainer : undefined
@@ -250,12 +285,30 @@ const styles = StyleSheet.create({
     backgroundColor: '#FF4444',
     paddingHorizontal: 12,
     paddingVertical: 4,
-    marginHorizontal: 16,
-    marginTop: 8,
     borderRadius: 12,
-    alignSelf: 'flex-start',
   },
   unreadBadgeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  statusBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#f8f9fa',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e1e5e9',
+  },
+  deliveryBadge: {
+    backgroundColor: '#00CC00',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  deliveryBadgeText: {
     color: '#ffffff',
     fontSize: 12,
     fontWeight: '600',
@@ -352,6 +405,29 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
     marginBottom: 24,
+  },
+  deliveryStatusContainer: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e1e5e9',
+  },
+  deliveryAcknowledged: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  deliveryPending: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  deliveryStatusText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  acknowledgmentTime: {
+    fontSize: 11,
+    color: '#666666',
   },
   connectionStatus: {
     alignItems: 'center',
