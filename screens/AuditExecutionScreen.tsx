@@ -16,7 +16,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { 
@@ -77,7 +77,7 @@ export default function AuditExecutionScreen() {
   // Auto-save timer
   const [autoSaveTimer, setAutoSaveTimer] = useState<NodeJS.Timeout | null>(null);
   
-  // Load assignment and template data
+  // Load assignment and template data when parameters change
   useEffect(() => {
     // Clear all state when auditId or assignmentId changes
     setAssignment(null);
@@ -90,6 +90,16 @@ export default function AuditExecutionScreen() {
     
     loadAuditData();
   }, [auditId, assignmentId]);
+
+  // Auto-load data when screen comes into focus (for when returning from other screens)
+  useFocusEffect(
+    React.useCallback(() => {
+      // Only reload if we have data and the screen is already loaded
+      if (assignment || audit) {
+        loadAuditData();
+      }
+    }, [assignment, audit])
+  );
   
   // Cleanup auto-save timer on unmount
   useEffect(() => {
@@ -378,6 +388,7 @@ export default function AuditExecutionScreen() {
   };
   
   const handleSaveProgress = async () => {
+    debugger
     setSaving(true);
     
     try {
@@ -620,6 +631,7 @@ export default function AuditExecutionScreen() {
   };
   
   const handleCompleteSection = async () => {
+    debugger;
     const sectionQuestions = getCurrentSectionQuestions();
     
     // Type-aware validation for required questions
@@ -670,91 +682,95 @@ export default function AuditExecutionScreen() {
       return;
     }
     
-    // Check if all questions are completed
-    const allAnswered = questions.every(q => 
-      !q.required || (q.answer !== null && q.answer !== '' && (!Array.isArray(q.answer) || q.answer.length > 0))
-    );
+    // Check if this is the last section and all questions in the audit are completed
+    const currentSectionIndex = sections.indexOf(currentSection);
+    const isLastSection = currentSectionIndex === sections.length - 1;
+    
+    if (isLastSection) {
+      // Check if all questions in the entire audit are completed
+      const allAuditQuestionsAnswered = questions.every(q => 
+        !q.required || (q.answer !== null && q.answer !== '' && (!Array.isArray(q.answer) || q.answer.length > 0))
+      );
 
-    if (allAnswered) {
-      // All questions complete - save as completed audit
-      setSaving(true);
-      try {
-        if (!audit) {
-          Alert.alert('Error', 'No audit found to save progress');
-          return;
-        }
-
-        // Prepare audit responses
-        const responses: { [key: string]: any } = {};
-        questions.forEach(q => {
-          if (q.answer !== null && q.answer !== '' && (!Array.isArray(q.answer) || q.answer.length > 0)) {
-            responses[q.id] = {
-              answer: q.answer,
-              notes: q.notes || undefined,
-              photos: q.photos.length > 0 ? q.photos : undefined
-            };
+      if (allAuditQuestionsAnswered) {
+        // All questions complete - save as completed audit
+        setSaving(true);
+        try {
+          if (!audit) {
+            Alert.alert('Error', 'No audit found to save progress');
+            return;
           }
-        });
 
-        const progressData: AuditProgressData = {
-          auditId: audit.auditId,
-          responses,
-          storeInfo: assignment?.storeInfo ? JSON.parse(assignment.storeInfo) : null,
-          location: null,
-          media: null,
-          completed: true // Mark as completed
-        };
-
-        const result = await auditService.saveAuditProgress(audit.auditId, progressData, true);
-        
-        // Update assignment status to "fulfilled" when audit is completed
-        if (assignment?.assignmentId) {
-          try {
-            await authService.updateAssignmentStatus(assignment.assignmentId, 'fulfilled');
-            console.log('Assignment status updated to fulfilled for assignment:', assignment.assignmentId);
-          } catch (error) {
-            console.error('Failed to update assignment status:', error);
-            // Don't block the completion flow if status update fails
-          }
-        }
-        
-        // The notification service will handle user feedback automatically
-        // Navigate back after a short delay to allow notification to be processed
-        setTimeout(() => {
-          navigation.goBack();
-        }, 1000);
-      } catch (error) {
-        console.error('Failed to complete audit:', error);
-        Alert.alert('Error', 'Failed to complete audit. Please try again.');
-      } finally {
-        setSaving(false);
-      }
-    } else {
-      // Save progress for current section
-      await handleSaveProgress();
-      
-      // Move to next section or go back
-      const currentSectionIndex = sections.indexOf(currentSection);
-      if (currentSectionIndex < sections.length - 1) {
-        const nextSection = sections[currentSectionIndex + 1];
-        Alert.alert(
-          "Section Complete",
-          "Would you like to continue to the next section?",
-          [
-            {
-              text: "Later",
-              onPress: () => navigation.goBack(),
-              style: "cancel"
-            },
-            {
-              text: "Continue",
-              onPress: () => setCurrentSection(nextSection)
+          // Prepare audit responses
+          const responses: { [key: string]: any } = {};
+          questions.forEach(q => {
+            if (q.answer !== null && q.answer !== '' && (!Array.isArray(q.answer) || q.answer.length > 0)) {
+              responses[q.id] = {
+                answer: q.answer,
+                notes: q.notes || undefined,
+                photos: q.photos.length > 0 ? q.photos : undefined
+              };
             }
-          ]
-        );
+          });
+
+          const progressData: AuditProgressData = {
+            auditId: audit.auditId,
+            responses,
+            storeInfo: assignment?.storeInfo ? JSON.parse(assignment.storeInfo) : null,
+            location: null,
+            media: null,
+            completed: true // Mark as completed
+          };
+
+          const result = await auditService.saveAuditProgress(audit.auditId, progressData, true);
+          
+          // Update assignment status to "fulfilled" when audit is completed
+          if (assignment?.assignmentId) {
+            try {
+              await authService.updateAssignmentStatus(assignment.assignmentId, 'fulfilled');
+              console.log('Assignment status updated to fulfilled for assignment:', assignment.assignmentId);
+            } catch (error) {
+              console.error('Failed to update assignment status:', error);
+              // Don't block the completion flow if status update fails
+            }
+          }
+          
+          // The notification service will handle user feedback automatically
+          // Navigate back after a short delay to allow notification to be processed
+          setTimeout(() => {
+            navigation.goBack();
+          }, 1000);
+        } catch (error) {
+          console.error('Failed to complete audit:', error);
+          Alert.alert('Error', 'Failed to complete audit. Please try again.');
+        } finally {
+          setSaving(false);
+        }
       } else {
+        // Last section but not all questions answered - save progress and go back
+        await handleSaveProgress();
         navigation.goBack();
       }
+    } else {
+      // Not the last section - save progress and move to next section
+      await handleSaveProgress();
+      
+      const nextSection = sections[currentSectionIndex + 1];
+      Alert.alert(
+        "Section Complete",
+        "Would you like to continue to the next section?",
+        [
+          {
+            text: "Later",
+            onPress: () => navigation.goBack(),
+            style: "cancel"
+          },
+          {
+            text: "Continue",
+            onPress: () => setCurrentSection(nextSection)
+          }
+        ]
+      );
     }
   };
 

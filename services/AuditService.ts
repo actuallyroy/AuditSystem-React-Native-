@@ -493,6 +493,7 @@ class AuditService {
    * Submit an audit (with offline support)
    */
   async submitAudit(auditId: string, submitData: SubmitAuditDto, isCompleted: boolean = true): Promise<AuditResponseDto> {
+    debugger;
     try {
       const isOnline = await this.isOnline();
       
@@ -626,17 +627,16 @@ class AuditService {
    */
   async updateAuditProgress(auditId: string, progressData: AuditProgressData): Promise<AuditResponseDto> {
     try {
-      // Use the submit endpoint but with completed: false to update progress
-      const url = `${API_BASE_URL}/Audits/${auditId}/submit`;
-      
+      const url = `${API_BASE_URL}/Audits/${auditId}`;
       const submitData = {
-        auditId,
         responses: progressData.responses,
         media: progressData.media,
         storeInfo: progressData.storeInfo,
-        location: progressData.location
+        location: progressData.location,
+        criticalIssues: 0, // or calculate if needed
+        status: "in_progress"
       };
-      
+
       if (LOG_REQUESTS) {
         debugLog('Update Audit Progress Request Body', submitData);
       }
@@ -965,4 +965,32 @@ class AuditService {
   }
 }
 
-export const auditService = new AuditService(); 
+export const auditService = new AuditService();
+
+// Set up the task processor for background sync to avoid require cycle
+backgroundSyncService.setTaskProcessor(async (task) => {
+  try {
+    debugLog('Processing sync task', { taskId: task.id, type: task.type });
+
+    switch (task.type) {
+      case 'audit_progress':
+        // Update audit progress
+        await auditService.updateAuditProgress(task.auditId, task.data);
+        break;
+        
+      case 'audit_complete':
+        // Submit completed audit
+        await auditService.submitAudit(task.auditId, task.data, true);
+        break;
+        
+      default:
+        throw new Error(`Unknown sync task type: ${task.type}`);
+    }
+
+    debugLog('Sync task completed successfully', { taskId: task.id });
+    return { success: true };
+  } catch (error) {
+    debugError(`Sync task failed: ${task.id}`, error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}); 

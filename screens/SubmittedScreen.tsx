@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { auditService, AuditSummaryDto } from '../services/AuditService';
 
@@ -31,9 +31,12 @@ export default function SubmittedScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
 
-  useEffect(() => {
-    loadSubmittedData();
-  }, []);
+  // Auto-load data when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      loadSubmittedData();
+    }, [])
+  );
 
   const loadSubmittedData = async () => {
     try {

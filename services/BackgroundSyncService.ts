@@ -1,8 +1,9 @@
 import { debugLogger } from '../utils/DebugLogger';
 import { storageService } from './StorageService';
 import { networkService } from './NetworkService';
-import { auditService } from './AuditService';
 
+// Remove direct import to avoid require cycle
+// import { auditService } from './AuditService';
 
 const DEBUG_MODE = true;
 
@@ -36,15 +37,26 @@ interface SyncResult {
   errors: string[];
 }
 
+// Callback type for processing sync tasks
+type SyncTaskProcessor = (task: SyncTask) => Promise<{ success: boolean; error?: string }>;
+
 class BackgroundSyncService {
   private isRunning = false;
   private syncQueue: SyncTask[] = [];
   private networkListener: (() => void) | null = null;
   private syncInterval: NodeJS.Timeout | null = null;
+  private taskProcessor: SyncTaskProcessor | null = null;
 
   constructor() {
     this.initializeNetworkListener();
     this.loadSyncQueue();
+  }
+
+  /**
+   * Set the task processor callback to avoid require cycle
+   */
+  setTaskProcessor(processor: SyncTaskProcessor) {
+    this.taskProcessor = processor;
   }
 
   /**
@@ -213,28 +225,24 @@ class BackgroundSyncService {
    * Process a single sync task
    */
   private async processSyncTask(task: SyncTask): Promise<{ success: boolean; error?: string }> {
+    if (!this.taskProcessor) {
+      throw new Error('Task processor not set');
+    }
+
     try {
       debugLog('Processing sync task', { taskId: task.id, type: task.type });
 
-      switch (task.type) {
-        case 'audit_progress':
-          // Update audit progress
-          await auditService.updateAuditProgress(task.auditId, task.data);
-          break;
-          
-        case 'audit_complete':
-          // Submit completed audit
-          await auditService.submitAudit(task.auditId, task.data, true);
-          break;
-          
-        default:
-          throw new Error(`Unknown sync task type: ${task.type}`);
-      }
+      const taskResult = await this.taskProcessor(task);
 
-      debugLog('Sync task completed successfully', { taskId: task.id });
-      return { success: true };
+      if (taskResult.success) {
+        debugLog('Sync task completed successfully', { taskId: task.id });
+        return { success: true };
+      } else {
+        debugError(`Sync task failed: ${task.id}`, taskResult.error);
+        return { success: false, error: taskResult.error };
+      }
     } catch (error) {
-      debugError(`Sync task failed: ${task.id}`, error);
+      debugError(`Error processing sync task ${task.id}:`, error);
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
   }

@@ -11,7 +11,7 @@ import {
   Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
 import { 
@@ -48,9 +48,12 @@ export default function AuditSubmitScreen() {
   const [responses, setResponses] = useState<AuditResponse[]>([]);
   const [showConfirmation, setShowConfirmation] = useState(false);
   
-  useEffect(() => {
-    loadAuditData();
-  }, [assignmentId || auditId]);
+  // Auto-load data when screen comes into focus or when params change
+  useFocusEffect(
+    React.useCallback(() => {
+      loadAuditData();
+    }, [assignmentId, auditId])
+  );
 
   const loadAuditData = async () => {
     try {

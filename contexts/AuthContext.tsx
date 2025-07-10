@@ -85,20 +85,56 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const validateToken = async (token: string): Promise<boolean> => {
+    debugger
     try {
       setTokenValidating(true);
       logger.log('Validating token with server');
       
-      // Test token validity by making a simple API call
-      const isValid = await authService.testTokenValidity();
+      // Add retry logic for token validation
+      const maxRetries = 3;
+      let lastError: any = null;
       
-      if (isValid) {
-        logger.log('Token validation successful');
-        return true;
-      } else {
-        logger.warn('Token validation failed - token is invalid or expired');
-        return false;
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          logger.log(`Token validation attempt ${attempt}/${maxRetries}`);
+          
+          // Test token validity by making a simple API call
+          const isValid = await authService.testTokenValidity();
+          
+          if (isValid) {
+            logger.log('Token validation successful');
+            return true;
+          } else {
+            logger.warn(`Token validation failed on attempt ${attempt}`);
+            lastError = new Error('Token validation returned false');
+            
+            // If this is not the last attempt, wait before retrying
+            if (attempt < maxRetries) {
+              const delay = attempt * 2000; // 2s, 4s, 6s delays
+              logger.log(`Waiting ${delay}ms before retry...`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            }
+          }
+        } catch (error) {
+          logger.error(`Token validation error on attempt ${attempt}:`, error instanceof Error ? error.message : 'Unknown error');
+          lastError = error;
+          
+          // If this is not the last attempt, wait before retrying
+          if (attempt < maxRetries) {
+            const delay = attempt * 2000; // 2s, 4s, 6s delays
+            logger.log(`Waiting ${delay}ms before retry...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+        }
       }
+      
+      logger.warn('Token validation failed after all retries - token is invalid or expired');
+      logger.error('Token validation error details:', { 
+        errorType: lastError?.constructor?.name,
+        errorMessage: lastError instanceof Error ? lastError.message : String(lastError),
+        stack: lastError instanceof Error ? lastError.stack : undefined
+      });
+      return false;
     } catch (error) {
       logger.error('Token validation error:', error instanceof Error ? error.message : 'Unknown error');
       logger.error('Token validation error details:', { 
@@ -124,24 +160,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const login = async (username: string, password: string) => {
+    debugger
     try {
       logger.log('Starting login process');
       const authResponse = await authService.login({ username, password });
       
-      // Validate the new token immediately
-      logger.log('Login successful, validating token');
-      const isTokenValid = await validateToken(authResponse.token);
-      if (!isTokenValid) {
-        logger.error('Token validation failed after login');
-        logger.error('Token validation failure details:', {
-          userId: authResponse.userId,
-          tokenLength: authResponse.token?.length || 0,
-          tokenPreview: authResponse.token ? `${authResponse.token.substring(0, 10)}...${authResponse.token.substring(authResponse.token.length - 10)}` : 'No token'
-        });
-        // Clear any partial auth data
-        await storageService.clearAuthData();
-        throw new Error('Login successful but session validation failed. Please try again.');
-      }
+      // Add a small delay to ensure the server has processed the login
+      logger.log('Login successful, waiting before token validation');
+      await new Promise(resolve => setTimeout(resolve, 1000));
       
       await storageService.storeAuthData(authResponse);
       setUser(authResponse);
@@ -176,15 +202,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       logger.log('Starting registration process');
       const authResponse = await authService.register(userData);
       
-      // Validate the new token immediately
-      logger.log('Registration successful, validating token');
-      const isTokenValid = await validateToken(authResponse.token);
-      if (!isTokenValid) {
-        logger.error('Token validation failed after registration');
-        // Clear any partial auth data
-        await storageService.clearAuthData();
-        throw new Error('Registration successful but session validation failed. Please try again.');
-      }
+      // Add a small delay to ensure the server has processed the registration
+      logger.log('Registration successful, waiting before token validation');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      
       
       await storageService.storeAuthData(authResponse);
       setUser(authResponse);

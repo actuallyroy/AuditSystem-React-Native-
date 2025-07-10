@@ -30,6 +30,11 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "description": "Retail Execution Audit System"
+    "description": "Retail Execution Audit System",
+    "extra": {
+      "eas": {
+        "projectId": "9546240f-bc09-4b78-bf75-399c58deda77"
+      }
+    }
   }
 }

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { authService, Assignment } from '../services/AuthService';
 import { auditService, AuditSummaryDto, AuditResponseDto } from '../services/AuditService';
@@ -28,9 +28,12 @@ export default function InProgressScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    loadInProgressData();
-  }, []);
+  // Auto-load data when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      loadInProgressData();
+    }, [])
+  );
 
   const loadInProgressData = async () => {
     try {

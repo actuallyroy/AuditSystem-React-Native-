@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { useNotifications } from '../contexts/NotificationContext';
 import { authService, Assignment } from '../services/AuthService';
@@ -39,7 +39,7 @@ interface RenderItemProps {
 export default function AuditListScreen() {
   const navigation = useNavigation();
   const { user } = useAuth();
-  const { unreadCount } = useNotifications();
+  const { state: notificationState } = useNotifications();
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [audits, setAudits] = useState<AuditSummaryDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,9 +48,12 @@ export default function AuditListScreen() {
   const [priorityFilter, setPriorityFilter] = useState('All');
   const [dueFilter, setDueFilter] = useState('All');
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  // Auto-load data when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      loadData();
+    }, [])
+  );
 
   const loadData = async () => {
     try {
@@ -167,7 +170,7 @@ export default function AuditListScreen() {
 
   // Filter items based on search query and filters
   const filteredAssignments = assignments
-            .filter(assignment => assignment.status !== 'fulfilled')
+            .filter(assignment => assignment.status !== 'Completed')
     .map(convertAssignmentToItem)
     .filter(item => {
       const matchesSearch = item.storeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -306,10 +309,10 @@ export default function AuditListScreen() {
             onPress={() => navigation.navigate('Notifications' as never)}
           >
             <Ionicons name="notifications-outline" size={24} color="#0066CC" />
-            {unreadCount > 0 && (
+            {notificationState.unreadCount > 0 && (
               <View style={styles.notificationBadge}>
                 <Text style={styles.notificationBadgeText}>
-                  {unreadCount > 99 ? '99+' : unreadCount}
+                  {notificationState.unreadCount > 99 ? '99+' : notificationState.unreadCount}
                 </Text>
               </View>
             )}

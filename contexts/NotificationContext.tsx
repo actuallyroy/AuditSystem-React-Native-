@@ -4,7 +4,8 @@ import WebSocketNotificationService, { WebSocketConnection, DeliveryAcknowledgme
 import PushNotificationService from '../services/PushNotificationService';
 import { useAuth } from './AuthContext';
 import { debugLogger } from '../utils/DebugLogger';
-import { authService } from '../services/AuthService'; // Added import for authService
+import { authService } from '../services/AuthService';
+import { storageService } from '../services/StorageService';
 
 const logger = debugLogger;
 
@@ -47,11 +48,11 @@ type NotificationAction =
   | { type: 'MARK_AS_READ'; payload: string }
   | { type: 'MARK_ALL_AS_READ' }
   | { type: 'DELETE_NOTIFICATION'; payload: string }
-  | { type: 'SET_UNREAD_COUNT'; payload: number }
   | { type: 'RECALCULATE_UNREAD_COUNT' }
   | { type: 'SET_ERROR'; payload: string | null }
   | { type: 'CLEAR_ERROR' }
-  | { type: 'DELIVERY_ACKNOWLEDGED'; payload: DeliveryAcknowledgment };
+  | { type: 'DELIVERY_ACKNOWLEDGED'; payload: DeliveryAcknowledgment }
+  | { type: 'LOAD_NOTIFICATIONS_FROM_STORAGE'; payload: Notification[] };
 
 // Initial state
 const initialState: NotificationState = {
@@ -88,81 +89,64 @@ function notificationReducer(state: NotificationState, action: NotificationActio
     case 'ADD_NOTIFICATION':
       const existingIndex = state.notifications.findIndex(n => n.id === action.payload.id);
       if (existingIndex >= 0) {
-        // Update existing notification - don't change unread count
+        // Update existing notification
         const updatedNotifications = [...state.notifications];
-        const existingNotification = updatedNotifications[existingIndex];
         updatedNotifications[existingIndex] = action.payload;
-        
-        // Only update unread count if the read status actually changed
-        let newUnreadCount = state.unreadCount;
-        if (existingNotification.isRead !== action.payload.isRead) {
-          if (action.payload.isRead) {
-            // Notification was marked as read
-            newUnreadCount = Math.max(0, state.unreadCount - 1);
-          } else {
-            // Notification was marked as unread
-            newUnreadCount = state.unreadCount + 1;
-          }
-        }
         
         return {
           ...state,
           notifications: updatedNotifications,
-          unreadCount: newUnreadCount,
+          unreadCount: updatedNotifications.filter(n => !n.isRead).length,
           lastUpdate: new Date()
         };
       } else {
         // Add new notification
+        const newNotifications = [action.payload, ...state.notifications];
         return {
           ...state,
-          notifications: [action.payload, ...state.notifications],
-          unreadCount: state.unreadCount + (action.payload.isRead ? 0 : 1),
+          notifications: newNotifications,
+          unreadCount: newNotifications.filter(n => !n.isRead).length,
           lastUpdate: new Date()
         };
       }
 
     case 'UPDATE_NOTIFICATIONS':
-      const unreadCount = action.payload.filter(n => !n.isRead).length;
       return {
         ...state,
         notifications: action.payload,
-        unreadCount,
+        unreadCount: action.payload.filter(n => !n.isRead).length,
         lastUpdate: new Date()
       };
 
     case 'MARK_AS_READ':
+      const updatedNotifications = state.notifications.map(notification =>
+        notification.id === action.payload
+          ? { ...notification, isRead: true }
+          : notification
+      );
       return {
         ...state,
-        notifications: state.notifications.map(notification =>
-          notification.id === action.payload
-            ? { ...notification, isRead: true }
-            : notification
-        ),
-        unreadCount: Math.max(0, state.unreadCount - 1)
+        notifications: updatedNotifications,
+        unreadCount: updatedNotifications.filter(n => !n.isRead).length
       };
 
     case 'MARK_ALL_AS_READ':
+      const allReadNotifications = state.notifications.map(notification => ({
+        ...notification,
+        isRead: true
+      }));
       return {
         ...state,
-        notifications: state.notifications.map(notification => ({
-          ...notification,
-          isRead: true
-        })),
+        notifications: allReadNotifications,
         unreadCount: 0
       };
 
     case 'DELETE_NOTIFICATION':
-      const notificationToDelete = state.notifications.find(n => n.id === action.payload);
+      const filteredNotifications = state.notifications.filter(n => n.id !== action.payload);
       return {
         ...state,
-        notifications: state.notifications.filter(n => n.id !== action.payload),
-        unreadCount: state.unreadCount - (notificationToDelete?.isRead ? 0 : 1)
-      };
-
-    case 'SET_UNREAD_COUNT':
-      return {
-        ...state,
-        unreadCount: action.payload
+        notifications: filteredNotifications,
+        unreadCount: filteredNotifications.filter(n => !n.isRead).length
       };
 
     case 'RECALCULATE_UNREAD_COUNT':
@@ -172,18 +156,27 @@ function notificationReducer(state: NotificationState, action: NotificationActio
       };
 
     case 'DELIVERY_ACKNOWLEDGED':
+      const acknowledgedNotifications = state.notifications.map(notification =>
+        notification.id === action.payload.notificationId
+          ? { 
+              ...notification, 
+              deliveryAcknowledged: true,
+              acknowledgedAt: action.payload.acknowledgedAt
+            }
+          : notification
+      );
       return {
         ...state,
-        notifications: state.notifications.map(notification =>
-          notification.id === action.payload.notificationId
-            ? { 
-                ...notification, 
-                deliveryAcknowledged: true,
-                acknowledgedAt: action.payload.acknowledgedAt
-              }
-            : notification
-        ),
+        notifications: acknowledgedNotifications,
         deliveryAcknowledgedCount: state.deliveryAcknowledgedCount + 1
+      };
+
+    case 'LOAD_NOTIFICATIONS_FROM_STORAGE':
+      return {
+        ...state,
+        notifications: action.payload,
+        unreadCount: action.payload.filter(n => !n.isRead).length,
+        lastUpdate: new Date()
       };
 
     case 'SET_ERROR':
@@ -214,6 +207,8 @@ interface NotificationContextType {
   getConnectionStats: () => any;
   recalculateUnreadCount: () => void;
   acknowledgeDelivery: (notificationId: string) => Promise<void>;
+  loadNotificationsFromStorage: () => Promise<void>;
+  saveNotificationsToStorage: () => Promise<void>;
 }
 
 // Create context
@@ -226,11 +221,42 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
   const connectionCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const notificationHandlerRef = useRef<(() => void) | null>(null);
-  const unreadCountHandlerRef = useRef<(() => void) | null>(null);
   const deliveryAcknowledgmentHandlerRef = useRef<(() => void) | null>(null);
   const pushNotificationResponseListenerRef = useRef<(() => void) | null>(null);
   const pushNotificationReceivedListenerRef = useRef<(() => void) | null>(null);
-  // No need for useRef since authService is already a singleton
+
+  // Load notifications from storage on mount
+  useEffect(() => {
+    loadNotificationsFromStorage();
+  }, []);
+
+  // Save notifications to storage whenever they change
+  useEffect(() => {
+    if (state.notifications.length > 0 || state.lastUpdate) {
+      saveNotificationsToStorage();
+    }
+  }, [state.notifications, state.lastUpdate]);
+
+  const loadNotificationsFromStorage = async () => {
+    try {
+      const storedNotifications = await storageService.getData('OFFLINE_NOTIFICATIONS');
+      if (storedNotifications && Array.isArray(storedNotifications)) {
+        dispatch({ type: 'LOAD_NOTIFICATIONS_FROM_STORAGE', payload: storedNotifications });
+        logger.log('Loaded notifications from storage:', storedNotifications.length);
+      }
+    } catch (error) {
+      logger.error('Failed to load notifications from storage:', error);
+    }
+  };
+
+  const saveNotificationsToStorage = async () => {
+    try {
+      await storageService.saveData('OFFLINE_NOTIFICATIONS', state.notifications);
+      logger.log('Saved notifications to storage:', state.notifications.length);
+    } catch (error) {
+      logger.error('Failed to save notifications to storage:', error);
+    }
+  };
 
   // Initialize push notifications
   useEffect(() => {
@@ -373,21 +399,6 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       
       notificationHandlerRef.current = cleanup;
 
-      // Set up unread count handler
-      if (unreadCountHandlerRef.current) {
-        unreadCountHandlerRef.current(); // Cleanup previous handler
-      }
-      
-      const unreadCountCleanup = WebSocketNotificationService.onUnreadCountUpdate((count: number) => {
-        dispatch({ type: 'SET_UNREAD_COUNT', payload: count });
-        // Update badge count to match unread count
-        PushNotificationService.updateBadgeCount(count).catch((error) => {
-          logger.error('Failed to update badge count', error);
-        });
-      });
-      
-      unreadCountHandlerRef.current = unreadCountCleanup;
-
       // Set up delivery acknowledgment handler
       if (deliveryAcknowledgmentHandlerRef.current) {
         deliveryAcknowledgmentHandlerRef.current(); // Cleanup previous handler
@@ -401,130 +412,120 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       deliveryAcknowledgmentHandlerRef.current = deliveryAcknowledgmentCleanup;
 
       dispatch({ type: 'SET_CONNECTED', payload: true });
-      dispatch({ type: 'CLEAR_ERROR' });
+      logger.log('Successfully connected to SignalR');
       
-      logger.log('SignalR connection established successfully');
-
     } catch (error) {
-      logger.error('Failed to connect to SignalR', error);
+      logger.error('Failed to connect to SignalR:', error);
       dispatch({ type: 'SET_CONNECTED', payload: false });
-      dispatch({ type: 'SET_ERROR', payload: error instanceof Error ? error.message : 'Connection failed' });
+      dispatch({ type: 'SET_ERROR', payload: 'Failed to connect to notification service' });
     }
   };
 
   const showPushNotification = async (notificationMessage: any) => {
     try {
-      // Determine priority based on notification type
-      let priority: 'default' | 'normal' | 'high' = 'default';
-      if (notificationMessage.priority === 'urgent') {
-        priority = 'high';
-      } else if (notificationMessage.priority === 'high') {
-        priority = 'high';
-      }
-
+      // Update badge count based on local unread count
+      const currentState = state;
+      const newUnreadCount = currentState.notifications.filter(n => !n.isRead).length;
+      
       await PushNotificationService.showNotification({
         notificationId: notificationMessage.notificationId,
         type: notificationMessage.type,
         title: notificationMessage.title,
         message: notificationMessage.message,
-        data: {
-          userId: notificationMessage.userId,
-          organisationId: notificationMessage.organisationId,
-          timestamp: notificationMessage.timestamp,
-        },
-        priority,
+        data: notificationMessage.data || {},
+        priority: notificationMessage.priority || 'default'
       });
-
-      logger.log('Push notification shown for new notification', {
-        notificationId: notificationMessage.notificationId,
-        title: notificationMessage.title,
-      });
+      
+      logger.log('Push notification shown with badge count:', newUnreadCount);
     } catch (error) {
-      logger.error('Failed to show push notification', error);
+      logger.error('Failed to show push notification:', error);
     }
   };
 
   const disconnectFromSignalR = () => {
     try {
-      WebSocketNotificationService.disconnect();
       if (notificationHandlerRef.current) {
         notificationHandlerRef.current();
         notificationHandlerRef.current = null;
       }
-      if (unreadCountHandlerRef.current) {
-        unreadCountHandlerRef.current();
-        unreadCountHandlerRef.current = null;
-      }
+      
       if (deliveryAcknowledgmentHandlerRef.current) {
         deliveryAcknowledgmentHandlerRef.current();
         deliveryAcknowledgmentHandlerRef.current = null;
       }
+      
+      WebSocketNotificationService.disconnect();
       dispatch({ type: 'SET_CONNECTED', payload: false });
-      logger.log('Disconnected from WebSocket');
+      logger.log('Disconnected from SignalR');
     } catch (error) {
-      logger.error('Error disconnecting from WebSocket', error);
+      logger.error('Error disconnecting from SignalR:', error);
     }
   };
 
   const reconnect = async (): Promise<void> => {
     try {
-      logger.log('Manual reconnection requested');
-      await disconnectFromSignalR();
+      disconnectFromSignalR();
       await connectToSignalR();
     } catch (error) {
-      logger.error('Manual reconnection failed', error);
+      logger.error('Failed to reconnect to SignalR:', error);
       throw error;
     }
   };
 
   const markAsRead = async (id: string) => {
     try {
-      // Update local state immediately
       dispatch({ type: 'MARK_AS_READ', payload: id });
       
-      // Send message to server via WebSocket
-      await WebSocketNotificationService.markNotificationAsRead(id);
+      // Update badge count
+      const newUnreadCount = state.notifications.filter(n => !n.isRead && n.id !== id).length;
+      await PushNotificationService.updateBadgeCount(newUnreadCount);
       
+      logger.log('Marked notification as read:', id);
     } catch (error) {
-      logger.error('Failed to mark notification as read', error);
+      logger.error('Failed to mark notification as read:', error);
+      throw error;
     }
   };
 
   const markAllAsRead = async () => {
     try {
       dispatch({ type: 'MARK_ALL_AS_READ' });
-
-      // Clear badge when all notifications are marked as read
-      await PushNotificationService.clearBadge();
       
-      // Send message to server via WebSocket
-      await WebSocketNotificationService.markAllNotificationsAsRead();
+      // Clear badge count
+      await PushNotificationService.updateBadgeCount(0);
       
+      logger.log('Marked all notifications as read');
     } catch (error) {
-      logger.error('Failed to mark all notifications as read', error);
+      logger.error('Failed to mark all notifications as read:', error);
+      throw error;
     }
   };
 
   const deleteNotification = async (id: string) => {
     try {
+      const notificationToDelete = state.notifications.find(n => n.id === id);
       dispatch({ type: 'DELETE_NOTIFICATION', payload: id });
       
-      // Note: There's no WebSocket method for deleting notifications in the protocol
-      // This would typically be done via REST API
-      // await notificationService.deleteNotification(id);
+      // Update badge count if the deleted notification was unread
+      if (notificationToDelete && !notificationToDelete.isRead) {
+        const newUnreadCount = state.notifications.filter(n => !n.isRead && n.id !== id).length;
+        await PushNotificationService.updateBadgeCount(newUnreadCount);
+      }
       
+      logger.log('Deleted notification:', id);
     } catch (error) {
-      logger.error('Failed to delete notification', error);
+      logger.error('Failed to delete notification:', error);
+      throw error;
     }
   };
 
   const refreshNotifications = () => {
-    // TODO: Fetch notifications from server
     logger.log('Refresh notifications requested');
+    // This could be used to manually refresh notifications from the server if needed
   };
 
   const getConnectionStats = () => {
-    return WebSocketNotificationService.getConnectionStats();
+    return state.connectionStats;
   };
 
   const recalculateUnreadCount = () => {
@@ -534,13 +535,14 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const acknowledgeDelivery = async (notificationId: string) => {
     try {
       await WebSocketNotificationService.acknowledgeDelivery(notificationId);
-      logger.log('Delivery acknowledgment sent for notification', { notificationId });
+      logger.log('Delivery acknowledgment sent for notification:', notificationId);
     } catch (error) {
-      logger.error('Failed to acknowledge delivery', error);
+      logger.error('Failed to acknowledge delivery:', error);
+      throw error;
     }
   };
 
-  const value: NotificationContextType = {
+  const contextValue: NotificationContextType = {
     state,
     markAsRead,
     markAllAsRead,
@@ -550,20 +552,21 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     getConnectionStats,
     recalculateUnreadCount,
     acknowledgeDelivery,
+    loadNotificationsFromStorage,
+    saveNotificationsToStorage
   };
 
   return (
-    <NotificationContext.Provider value={value}>
+    <NotificationContext.Provider value={contextValue}>
       {children}
     </NotificationContext.Provider>
   );
 };
 
-// Hook to use notifications
 export const useNotifications = () => {
   const context = useContext(NotificationContext);
-  if (!context) {
-    throw new Error('useNotifications must be used within NotificationProvider');
+  if (context === undefined) {
+    throw new Error('useNotifications must be used within a NotificationProvider');
   }
   return context;
 }; 

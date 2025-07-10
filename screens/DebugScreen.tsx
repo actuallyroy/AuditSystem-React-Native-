@@ -49,14 +49,9 @@ const DebugScreen: React.FC = () => {
       log(`Token length: ${result.details.tokenLength}`);
       log(`UserId: ${result.details.userId}`);
       
-      if (result.details.userDetailsEndpoint) {
-        log(`User details endpoint: ${result.details.userDetailsEndpoint.success ? 'SUCCESS' : 'FAILED'} (${result.details.userDetailsEndpoint.status})`);
-        log(`User details response: ${result.details.userDetailsEndpoint.response}`);
-      }
-      
-      if (result.details.healthEndpoint) {
-        log(`Health endpoint: ${result.details.healthEndpoint.success ? 'SUCCESS' : 'FAILED'} (${result.details.healthEndpoint.status})`);
-        log(`Health response: ${result.details.healthEndpoint.response}`);
+      if (result.details.validateTokenEndpoint) {
+        log(`Validate token endpoint: ${result.details.validateTokenEndpoint.success ? 'SUCCESS' : 'FAILED'} (${result.details.validateTokenEndpoint.status})`);
+        log(`Validate token response: ${result.details.validateTokenEndpoint.response}`);
       }
       
       if (result.details.errors.length > 0) {
@@ -67,13 +62,91 @@ const DebugScreen: React.FC = () => {
       // Show alert with summary
       Alert.alert(
         'Token Validation Test',
-        `Result: ${result.success ? 'SUCCESS' : 'FAILED'}\n\nNetwork: ${result.details.isOnline ? 'Online' : 'Offline'}\nToken: ${result.details.hasToken ? 'Present' : 'Missing'}\nUser ID: ${result.details.hasUserId ? 'Present' : 'Missing'}\n\nErrors: ${result.details.errors.length}`,
+        `Result: ${result.success ? 'SUCCESS' : 'FAILED'}\n\nNetwork: ${result.details.isOnline ? 'Online' : 'Offline'}\nToken: ${result.details.hasToken ? 'Present' : 'Missing'}\nUser ID: ${result.details.hasUserId ? 'Present' : 'Missing'}\nValidate Token: ${result.details.validateTokenEndpoint?.success ? 'OK' : 'FAILED'}\n\nErrors: ${result.details.errors.length}`,
         [{ text: 'OK' }]
       );
       
     } catch (error) {
       log(`Token validation test error: ${error instanceof Error ? error.message : String(error)}`);
       Alert.alert('Error', `Token validation test failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  const testApiConnectivity = async () => {
+    try {
+      setIsValidating(true);
+      log('Starting API connectivity test...');
+      
+      const result = await authService.testApiConnectivity();
+      
+      log(`API connectivity result: ${result.success ? 'SUCCESS' : 'FAILED'}`);
+      log(`Network check: ${result.details.networkCheck}`);
+      
+      if (result.details.healthEndpoint) {
+        log(`Health endpoint: ${result.details.healthEndpoint.success ? 'SUCCESS' : 'FAILED'} (${result.details.healthEndpoint.status})`);
+        log(`Health response: ${result.details.healthEndpoint.response}`);
+      }
+      
+      if (result.details.authEndpoint) {
+        log(`Auth endpoint: ${result.details.authEndpoint.success ? 'SUCCESS' : 'FAILED'} (${result.details.authEndpoint.status})`);
+        log(`Auth response: ${result.details.authEndpoint.response}`);
+      }
+      
+      if (result.details.validateTokenEndpoint) {
+        log(`Validate token endpoint: ${result.details.validateTokenEndpoint.success ? 'SUCCESS' : 'FAILED'} (${result.details.validateTokenEndpoint.status})`);
+        log(`Validate token response: ${result.details.validateTokenEndpoint.response}`);
+      }
+      
+      if (result.details.errors.length > 0) {
+        log('Errors:');
+        result.details.errors.forEach(error => log(`  - ${error}`));
+      }
+      
+      // Show alert with summary
+      Alert.alert(
+        'API Connectivity Test',
+        `Result: ${result.success ? 'SUCCESS' : 'FAILED'}\n\nNetwork: ${result.details.networkCheck ? 'Online' : 'Offline'}\nHealth: ${result.details.healthEndpoint?.success ? 'OK' : 'FAILED'}\nAuth: ${result.details.authEndpoint?.success ? 'OK' : 'FAILED'}\nValidate Token: ${result.details.validateTokenEndpoint?.success ? 'OK' : 'FAILED'}\n\nErrors: ${result.details.errors.length}`,
+        [{ text: 'OK' }]
+      );
+      
+    } catch (error) {
+      log(`API connectivity test error: ${error instanceof Error ? error.message : String(error)}`);
+      Alert.alert('Error', `API connectivity test failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  const testSpecificToken = async () => {
+    try {
+      setIsValidating(true);
+      log('Testing specific token validation...');
+      
+      // The token from the curl command
+      const testToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1laWQiOiIyYzhlZjE0Yi04MDM4LTQ4NDEtOGE0MS0xMzEyMzZjNTUwODIiLCJ1bmlxdWVfbmFtZSI6ImpvaG5kb2UiLCJnaXZlbl9uYW1lIjoiSm9obiIsImZhbWlseV9uYW1lIjoiRG9lIiwicm9sZSI6ImF1ZGl0b3IiLCJlbWFpbCI6ImpvaG5kb2VAZXhhbXBsZS5jb20iLCJvcmdhbmlzYXRpb25faWQiOiI4NWU3NDMzNi04M2MwLTQ3MWEtYWM5ZC1lOWQwOWQ3MjU2ZTQiLCJuYmYiOjE3NTIxNzE4NTMsImV4cCI6MTc1MjIwMDY1MywiaWF0IjoxNzUyMTcxODUzLCJpc3MiOiJBdWRpdFN5c3RlbSIsImF1ZCI6IkF1ZGl0U3lzdGVtQ2xpZW50cyJ9.WUYieTNo4WvWqGMlXuZ7MYJWhegqb6aZLwOl-p210oc';
+      
+      const result = await authService.testSpecificToken(testToken);
+      
+      log(`Specific token validation result: ${result.success ? 'SUCCESS' : 'FAILED'}`);
+      log(`Status: ${result.details.status}`);
+      log(`Response: ${result.details.response}`);
+      
+      if (result.details.error) {
+        log(`Error: ${result.details.error}`);
+      }
+      
+      // Show alert with summary
+      Alert.alert(
+        'Specific Token Test',
+        `Result: ${result.success ? 'SUCCESS' : 'FAILED'}\n\nStatus: ${result.details.status}\nResponse: ${result.details.response.substring(0, 100)}${result.details.response.length > 100 ? '...' : ''}`,
+        [{ text: 'OK' }]
+      );
+      
+    } catch (error) {
+      log(`Specific token test error: ${error instanceof Error ? error.message : String(error)}`);
+      Alert.alert('Error', `Specific token test failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsValidating(false);
     }
@@ -153,6 +226,20 @@ const DebugScreen: React.FC = () => {
         <TouchableOpacity style={styles.debugButton} onPress={showDebugLogs}>
           <Text style={styles.debugButtonText}>Debug Logs</Text>
         </TouchableOpacity>
+      </View>
+      <View style={styles.buttonRow}>
+        <Button
+          title={isValidating ? 'Testing...' : 'Test API Connectivity'}
+          onPress={testApiConnectivity}
+          disabled={isValidating}
+        />
+      </View>
+      <View style={styles.buttonRow}>
+        <Button
+          title={isValidating ? 'Testing...' : 'Test Specific Token'}
+          onPress={testSpecificToken}
+          disabled={isValidating}
+        />
       </View>
       {!useEcho && useAuth && (
         <Text style={styles.tokenText}>Token: {maskToken(token)}</Text>

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   RefreshControl,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNotifications } from '../contexts/NotificationContext';
@@ -17,8 +18,9 @@ interface NotificationScreenProps {
 }
 
 const NotificationScreen: React.FC<NotificationScreenProps> = ({ navigation }) => {
-  const { state, markAsRead, markAllAsRead, deleteNotification } = useNotifications();
+  const { state, markAsRead, markAllAsRead, deleteNotification, loadNotificationsFromStorage } = useNotifications();
   const { notifications, unreadCount, connectionStats, isConnected, deliveryAcknowledgedCount } = state;
+  const [refreshing, setRefreshing] = useState(false);
 
   const handleMarkAsRead = async (notificationId: string) => {
     try {
@@ -59,6 +61,18 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({ navigation }) =
         }},
       ]
     );
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await loadNotificationsFromStorage();
+      debugLogger.log('[NotificationScreen] Refresh completed');
+    } catch (error) {
+      debugLogger.error('[NotificationScreen] Refresh failed:', error);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const getPriorityColor = (priority: string) => {
@@ -235,10 +249,8 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({ navigation }) =
         ListEmptyComponent={renderEmptyState}
         refreshControl={
           <RefreshControl
-            refreshing={false}
-            onRefresh={() => {
-              debugLogger.log('[NotificationScreen] Refresh requested');
-            }}
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
           />
         }
       />
