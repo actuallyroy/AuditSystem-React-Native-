@@ -176,8 +176,8 @@ export default function AuditSubmitScreen() {
                   {
                     text: 'OK',
                     onPress: () => {
-                      // Navigate back to audit list
-                      (navigation as any).navigate('Home');
+                      // Navigate to submitted screen to show the submitted audit
+                      (navigation as any).navigate('AuditSubmit');
                     }
                   }
                 ]

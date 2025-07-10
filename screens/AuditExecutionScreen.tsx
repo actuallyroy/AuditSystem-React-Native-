@@ -49,6 +49,7 @@ interface RouteParams {
 }
 
 export default function AuditExecutionScreen() {
+  console.log("Rendering!!!")
   const navigation = useNavigation();
   const route = useRoute();
   const { user } = useAuth();
@@ -98,7 +99,7 @@ export default function AuditExecutionScreen() {
       if (assignment || audit) {
         loadAuditData();
       }
-    }, [assignment, audit])
+    }, [])
   );
   
   // Cleanup auto-save timer on unmount

@@ -493,7 +493,6 @@ class AuditService {
    * Submit an audit (with offline support)
    */
   async submitAudit(auditId: string, submitData: SubmitAuditDto, isCompleted: boolean = true): Promise<AuditResponseDto> {
-    debugger;
     try {
       const isOnline = await this.isOnline();
       

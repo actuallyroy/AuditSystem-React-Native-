@@ -796,7 +796,6 @@ class AuthService {
    * Test if the current token is valid by making a simple authenticated request
    */
   async testTokenValidity(): Promise<boolean> {
-    debugger
     try {
       debugLog('Starting token validation test');
       

@@ -85,7 +85,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const validateToken = async (token: string): Promise<boolean> => {
-    debugger
     try {
       setTokenValidating(true);
       logger.log('Validating token with server');
@@ -160,7 +159,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const login = async (username: string, password: string) => {
-    debugger
     try {
       logger.log('Starting login process');
       const authResponse = await authService.login({ username, password });
