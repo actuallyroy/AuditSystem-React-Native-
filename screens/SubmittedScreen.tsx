@@ -188,7 +188,7 @@ export default function SubmittedScreen() {
     return (
       <TouchableOpacity 
         style={styles.auditCard}
-        onPress={() => (navigation as any).navigate('AuditDetail', { 
+        onPress={() => (navigation as any).navigate('AuditDetails', { 
           auditId: item.id, 
           readOnly: true 
         })}
@@ -234,7 +234,7 @@ export default function SubmittedScreen() {
         
         <TouchableOpacity 
           style={styles.viewButton}
-          onPress={() => (navigation as any).navigate('AuditDetail', { 
+          onPress={() => (navigation as any).navigate('AuditDetails', { 
             auditId: item.id, 
             readOnly: true 
           })}

@@ -232,8 +232,7 @@ export default function AuditListScreen() {
     return (
       <TouchableOpacity 
         style={styles.auditCard}
-        onPress={() => (navigation as any).navigate('AuditDetail', { 
-          auditId: item.id,
+        onPress={() => (navigation as any).navigate('AssignmentDetail', { 
           assignmentId: item.assignmentId
         })}
       >

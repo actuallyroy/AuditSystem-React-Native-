@@ -13,6 +13,8 @@ import OfflineIndicator from "./components/OfflineIndicator";
 import TokenValidationScreen from "./components/TokenValidationScreen";
 import HomeScreen from "./screens/HomeScreen"
 import AuditDetailScreen from "./screens/AuditDetailScreen";
+import AuditDetailsScreen from "./screens/AuditDetailsScreen";
+import AssignmentDetailScreen from "./screens/AssignmentDetailScreen";
 import AuditExecutionScreen from "./screens/AuditExecutionScreen";
 import AuditSubmitScreen from "./screens/AuditSubmitScreen";
 import LoginScreen from "./screens/LoginScreen";
@@ -49,6 +51,8 @@ function MainStack(): JSX.Element {
     }}>
       <Stack.Screen name="Home" component={HomeScreen} />
       <Stack.Screen name="AuditDetail" component={AuditDetailScreen} />
+      <Stack.Screen name="AuditDetails" component={AuditDetailsScreen} />
+      <Stack.Screen name="AssignmentDetail" component={AssignmentDetailScreen} />
       <Stack.Screen name="AuditExecution" component={AuditExecutionScreen} />
       <Stack.Screen name="AuditSubmit" component={AuditSubmitScreen} />
       <Stack.Screen name="Notifications" component={NotificationScreen} />
