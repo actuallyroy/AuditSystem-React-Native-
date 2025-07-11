@@ -20,7 +20,7 @@ export interface OfflineOperation {
   id: string;
   type: 'CREATE' | 'UPDATE' | 'DELETE' | 'SUBMIT';
   endpoint: string;
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   data?: any;
   timestamp: number;
   retryCount: number;
@@ -42,6 +42,31 @@ class OfflineService {
 
   constructor() {
     this.initializeNetworkListener();
+    this.initialize();
+  }
+
+  /**
+   * Initialize the service and sync status
+   */
+  private async initialize() {
+    try {
+      // Get the stored last sync time and update the sync status
+      const lastSyncTime = await storageService.getLastSyncTime();
+      const currentStatus = await storageService.getSyncStatus();
+      
+      // Update sync status with the correct lastSyncTime if it's different
+      if (currentStatus.lastSyncTime !== lastSyncTime) {
+        await this.updateSyncStatus({ lastSyncTime });
+      }
+      
+      // Update online status
+      const isOnline = await this.isOnline();
+      await this.updateSyncStatus({ isOnline });
+      
+      debugLog('OfflineService initialized', { lastSyncTime, isOnline });
+    } catch (error) {
+      debugError('Error initializing OfflineService', error);
+    }
   }
 
   /**
@@ -161,6 +186,13 @@ class OfflineService {
   private async executeOperation(operation: OfflineRequest): Promise<boolean> {
     try {
       debugLog('Executing operation', { id: operation.id, type: operation.type, endpoint: operation.endpoint });
+      
+      // Check if we're online before attempting the operation
+      const isOnline = await this.isOnline();
+      if (!isOnline) {
+        debugLog('Device is offline, skipping operation', { id: operation.id });
+        return false;
+      }
       
       const token = await storageService.getAuthToken();
       if (!token) {
@@ -303,7 +335,7 @@ class OfflineService {
       }
 
       // Update last sync time
-      await storageService.updateLastSyncTime();
+      await this.updateLastSyncTime();
       
       debugLog('Sync completed', result);
     } catch (error) {
@@ -330,6 +362,16 @@ class OfflineService {
    */
   async getLastSyncTime(): Promise<number> {
     return await storageService.getLastSyncTime();
+  }
+
+  /**
+   * Update last sync time manually
+   */
+  async updateLastSyncTime(): Promise<void> {
+    const currentTime = Date.now();
+    await storageService.updateLastSyncTime();
+    await this.updateSyncStatus({ lastSyncTime: currentTime });
+    debugLog('Last sync time updated manually', { timestamp: currentTime });
   }
 
   /**

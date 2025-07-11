@@ -357,24 +357,67 @@ class AuditService {
   }
 
   /**
-   * Get audit by ID
+   * Get audit by ID (with offline support)
    */
   async getAuditById(auditId: string): Promise<AuditResponseDto> {
     try {
-      debugLog('Attempting to get audit by ID', { auditId });
-      const url = `${API_BASE_URL}/Audits/${auditId}`;
-      debugLog('Get Audit URL', { url });
+      const isOnline = await this.isOnline();
       
-      const response = await this.makeAuthenticatedRequest(url, { method: 'GET' }, 'Get Audit By ID');
+      if (isOnline) {
+        // Try to get from server
+        try {
+          debugLog('Attempting to get audit by ID from server', { auditId });
+          const url = `${API_BASE_URL}/Audits/${auditId}`;
+          debugLog('Get Audit URL', { url });
+          
+          const response = await this.makeAuthenticatedRequest(url, { method: 'GET' }, 'Get Audit By ID');
+          
+          const audit = await this.handleResponse(response, 'Get Audit By ID');
+          debugLog('Audit Retrieved Successfully from Server', { 
+            auditId: audit.auditId, 
+            status: audit.status,
+            assignmentId: audit.assignmentId,
+            templateId: audit.templateId
+          });
+          
+          // Cache audit for offline use
+          const offlineAudits = await storageService.getOfflineAudits();
+          const existingIndex = offlineAudits.findIndex(a => a.auditId === auditId);
+          
+          if (existingIndex >= 0) {
+            offlineAudits[existingIndex] = audit;
+          } else {
+            offlineAudits.push(audit);
+          }
+          
+          await storageService.storeOfflineAudits(offlineAudits);
+          await storageService.storeCache(`CACHE_AUDIT_${auditId}`, audit, 30 * 60 * 1000); // 30 minutes
+          
+          return audit;
+        } catch (serverError) {
+          debugError('Server request failed, falling back to offline data', serverError);
+          // Fall through to offline data
+        }
+      }
+
+      // Get from offline storage
+      const offlineAudits = await storageService.getOfflineAudits();
+      const cachedAudit = await storageService.getCache(`CACHE_AUDIT_${auditId}`);
       
-      const audit = await this.handleResponse(response, 'Get Audit By ID');
-      debugLog('Audit Retrieved Successfully', { 
-        auditId: audit.auditId, 
-        status: audit.status,
-        assignmentId: audit.assignmentId,
-        templateId: audit.templateId
-      });
-      return audit;
+      const audit = offlineAudits.find(a => a.auditId === auditId) || cachedAudit;
+      
+      if (audit) {
+        debugLog('Audit Retrieved from Offline Storage', { 
+          auditId: audit.auditId, 
+          status: audit.status,
+          assignmentId: audit.assignmentId,
+          templateId: audit.templateId
+        });
+        return audit;
+      }
+
+      // If not found in offline storage, throw error
+      throw new Error(`Audit ${auditId} not found in offline storage`);
 
     } catch (error) {
       debugError('Get Audit By ID Error', { 
@@ -569,24 +612,80 @@ class AuditService {
   }
 
   /**
-   * Update audit status
+   * Update audit status (with offline support)
    */
   async updateAuditStatus(auditId: string, statusData: UpdateAuditStatusDto): Promise<AuditResponseDto> {
     try {
-      const url = `${API_BASE_URL}/Audits/${auditId}/status`;
+      const isOnline = await this.isOnline();
       
-      if (LOG_REQUESTS) {
-        debugLog('Update Audit Status Request Body', statusData);
+      if (isOnline) {
+        // Try to update on server
+        try {
+          const url = `${API_BASE_URL}/Audits/${auditId}/status`;
+          
+          if (LOG_REQUESTS) {
+            debugLog('Update Audit Status Request Body', statusData);
+          }
+
+          const response = await this.makeAuthenticatedRequest(url, {
+            method: 'PATCH',
+            body: JSON.stringify(statusData),
+          }, 'Update Audit Status');
+
+          const audit = await this.handleResponse(response, 'Update Audit Status');
+          debugLog('Audit Status Updated on Server', `Audit ID: ${audit.auditId}, New Status: ${audit.status}`);
+          
+          // Update local cache
+          const offlineAudits = await storageService.getOfflineAudits();
+          const auditIndex = offlineAudits.findIndex(a => a.auditId === auditId);
+          
+          if (auditIndex >= 0) {
+            offlineAudits[auditIndex] = {
+              ...offlineAudits[auditIndex],
+              status: audit.status,
+              managerNotes: audit.managerNotes,
+              isFlagged: audit.isFlagged
+            };
+            await storageService.storeOfflineAudits(offlineAudits);
+          }
+          
+          return audit;
+        } catch (serverError) {
+          debugError('Server update failed, updating offline', serverError);
+          // Fall through to offline update
+        }
       }
 
-      const response = await this.makeAuthenticatedRequest(url, {
-        method: 'PATCH',
-        body: JSON.stringify(statusData),
-      }, 'Update Audit Status');
-
-      const audit = await this.handleResponse(response, 'Update Audit Status');
-      debugLog('Audit Status Updated', `Audit ID: ${audit.auditId}, New Status: ${audit.status}`);
-      return audit;
+      // Update offline audit status
+      const offlineAudits = await storageService.getOfflineAudits();
+      const auditIndex = offlineAudits.findIndex(a => a.auditId === auditId);
+      
+      if (auditIndex >= 0) {
+        const updatedAudit = {
+          ...offlineAudits[auditIndex],
+          status: statusData.status,
+          managerNotes: statusData.managerNotes,
+          isFlagged: statusData.isFlagged
+        };
+        
+        offlineAudits[auditIndex] = updatedAudit;
+        await storageService.storeOfflineAudits(offlineAudits);
+        
+        // Add to offline queue for later sync
+        await offlineService.addToQueue({
+          type: 'UPDATE',
+          endpoint: `/Audits/${auditId}/status`,
+          method: 'PATCH',
+          data: statusData,
+          maxRetries: 3,
+          priority: 'MEDIUM',
+        });
+        
+        debugLog('Audit Status Updated Offline', `Audit ID: ${auditId}, New Status: ${statusData.status}`);
+        return updatedAudit;
+      } else {
+        throw new Error(`Audit ${auditId} not found in offline storage`);
+      }
 
     } catch (error) {
       debugError('Update Audit Status Error', error instanceof Error ? error.message : 'Unknown error');
@@ -595,24 +694,76 @@ class AuditService {
   }
 
   /**
-   * Flag or unflag an audit
+   * Flag or unflag an audit (with offline support)
    */
   async flagAudit(auditId: string, isFlagged: boolean): Promise<AuditResponseDto> {
     try {
-      const url = `${API_BASE_URL}/Audits/${auditId}/flag`;
+      const isOnline = await this.isOnline();
       
-      if (LOG_REQUESTS) {
-        debugLog('Flag Audit Request Body', { isFlagged });
+      if (isOnline) {
+        // Try to update on server
+        try {
+          const url = `${API_BASE_URL}/Audits/${auditId}/flag`;
+          
+          if (LOG_REQUESTS) {
+            debugLog('Flag Audit Request Body', { isFlagged });
+          }
+
+          const response = await this.makeAuthenticatedRequest(url, {
+            method: 'PATCH',
+            body: JSON.stringify(isFlagged),
+          }, 'Flag Audit');
+
+          const audit = await this.handleResponse(response, 'Flag Audit');
+          debugLog('Audit Flag Updated on Server', `Audit ID: ${audit.auditId}, Flagged: ${audit.isFlagged}`);
+          
+          // Update local cache
+          const offlineAudits = await storageService.getOfflineAudits();
+          const auditIndex = offlineAudits.findIndex(a => a.auditId === auditId);
+          
+          if (auditIndex >= 0) {
+            offlineAudits[auditIndex] = {
+              ...offlineAudits[auditIndex],
+              isFlagged: audit.isFlagged
+            };
+            await storageService.storeOfflineAudits(offlineAudits);
+          }
+          
+          return audit;
+        } catch (serverError) {
+          debugError('Server update failed, updating offline', serverError);
+          // Fall through to offline update
+        }
       }
 
-      const response = await this.makeAuthenticatedRequest(url, {
-        method: 'PATCH',
-        body: JSON.stringify(isFlagged),
-      }, 'Flag Audit');
-
-      const audit = await this.handleResponse(response, 'Flag Audit');
-      debugLog('Audit Flag Updated', `Audit ID: ${audit.auditId}, Flagged: ${audit.isFlagged}`);
-      return audit;
+      // Update offline audit flag
+      const offlineAudits = await storageService.getOfflineAudits();
+      const auditIndex = offlineAudits.findIndex(a => a.auditId === auditId);
+      
+      if (auditIndex >= 0) {
+        const updatedAudit = {
+          ...offlineAudits[auditIndex],
+          isFlagged: isFlagged
+        };
+        
+        offlineAudits[auditIndex] = updatedAudit;
+        await storageService.storeOfflineAudits(offlineAudits);
+        
+        // Add to offline queue for later sync
+        await offlineService.addToQueue({
+          type: 'UPDATE',
+          endpoint: `/Audits/${auditId}/flag`,
+          method: 'PATCH',
+          data: isFlagged,
+          maxRetries: 3,
+          priority: 'MEDIUM',
+        });
+        
+        debugLog('Audit Flag Updated Offline', `Audit ID: ${auditId}, Flagged: ${isFlagged}`);
+        return updatedAudit;
+      } else {
+        throw new Error(`Audit ${auditId} not found in offline storage`);
+      }
 
     } catch (error) {
       debugError('Flag Audit Error', error instanceof Error ? error.message : 'Unknown error');
@@ -947,6 +1098,13 @@ class AuditService {
    * Test API connectivity
    */
   async testConnection(): Promise<boolean> {
+    // Check if we're online first
+    const isOnline = await this.isOnline();
+    if (!isOnline) {
+      debugLog('Device is offline, cannot test connection');
+      return false;
+    }
+    
     try {
       const response = await fetch(`${API_BASE_URL}/health`, {
         method: 'GET',

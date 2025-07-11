@@ -451,6 +451,13 @@ class AuthService {
   async testConnection(): Promise<boolean> {
     debugLog('Testing API connection to:', API_BASE_URL);
     
+    // Check if we're online first
+    const isOnline = await this.isOnline();
+    if (!isOnline) {
+      debugLog('Device is offline, cannot test connection');
+      return false;
+    }
+    
     try {
       const response = await fetch(`${API_BASE_URL}/health`, {
         method: 'GET',
@@ -913,6 +920,20 @@ class AuthService {
     try {
       debugLog('Testing specific token validation');
       
+      // Check if we're online first
+      const isOnline = await this.isOnline();
+      if (!isOnline) {
+        debugLog('Device is offline, cannot test specific token');
+        return {
+          success: false,
+          details: {
+            status: 0,
+            response: '',
+            error: 'Device is offline'
+          }
+        };
+      }
+      
       const url = `${API_BASE_URL}/Auth/validate-token`;
       const response = await fetch(url, {
         method: 'POST',
@@ -953,23 +974,60 @@ class AuthService {
   }
 
   /**
-   * Get assignment details by ID
+   * Get assignment details by ID (with offline support)
    */
   async getAssignmentDetails(assignmentId: string): Promise<Assignment> {
     try {
-      const url = `${API_BASE_URL}/Assignments/${assignmentId}`;
-      const response = await this.makeAuthenticatedRequest(url, { method: 'GET' }, 'Get Assignment Details');
+      const isOnline = await this.isOnline();
       
-      const assignment: Assignment = await this.handleResponse(response, 'Get Assignment Details');
+      if (isOnline) {
+        // Try to get from server
+        try {
+          const url = `${API_BASE_URL}/Assignments/${assignmentId}`;
+          const response = await this.makeAuthenticatedRequest(url, { method: 'GET' }, 'Get Assignment Details');
+          
+          const assignment: Assignment = await this.handleResponse(response, 'Get Assignment Details');
+          
+          // Convert API status to UI status
+          const assignmentWithUiStatus = {
+            ...assignment,
+            status: this.convertStatusToUi(assignment.status || 'pending')
+          };
+          
+          // Cache assignment for offline use
+          const assignments = await storageService.getOfflineAssignments();
+          const existingIndex = assignments.findIndex(a => a.assignmentId === assignmentId);
+          
+          if (existingIndex >= 0) {
+            assignments[existingIndex] = assignmentWithUiStatus;
+          } else {
+            assignments.push(assignmentWithUiStatus);
+          }
+          
+          await storageService.storeOfflineAssignments(assignments);
+          await storageService.storeCache(`CACHE_ASSIGNMENT_${assignmentId}`, assignmentWithUiStatus, 30 * 60 * 1000); // 30 minutes
+          
+          debugLogger.log('Assignment Details Retrieved from Server', `Assignment: ${assignment.assignmentId}, Status: ${assignmentWithUiStatus.status}`);
+          return assignmentWithUiStatus;
+        } catch (serverError) {
+          debugLogger.error('Server request failed, falling back to offline data', serverError);
+          // Fall through to offline data
+        }
+      }
+
+      // Get from offline storage
+      const offlineAssignments = await storageService.getOfflineAssignments();
+      const cachedAssignment = await storageService.getCache(`CACHE_ASSIGNMENT_${assignmentId}`);
       
-      // Convert API status to UI status
-      const assignmentWithUiStatus = {
-        ...assignment,
-        status: this.convertStatusToUi(assignment.status || 'pending')
-      };
+      const assignment = offlineAssignments.find(a => a.assignmentId === assignmentId) || cachedAssignment;
       
-      debugLogger.log('Assignment Details Retrieved', `Assignment: ${assignment.assignmentId}, Status: ${assignmentWithUiStatus.status}`);
-      return assignmentWithUiStatus;
+      if (assignment) {
+        debugLogger.log('Assignment Details Retrieved from Offline Storage', `Assignment: ${assignment.assignmentId}, Status: ${assignment.status}`);
+        return assignment;
+      }
+
+      // If not found in offline storage, throw error
+      throw new Error(`Assignment ${assignmentId} not found in offline storage`);
 
     } catch (error) {
       debugLogger.error('Get Assignment Details Error', error instanceof Error ? error.message : 'Unknown error');
@@ -1081,22 +1139,73 @@ class AuthService {
   }
 
   /**
-   * Update assignment status
+   * Update assignment status (with offline support)
    */
   async updateAssignmentStatus(assignmentId: string, status: string): Promise<void> {
     try {
-      const url = `${API_BASE_URL}/Assignments/${assignmentId}/status`;
+      const isOnline = await this.isOnline();
       
-      // Convert UI status to API status
-      const apiStatus = this.convertStatusToApi(status);
-      
-      const response = await this.makeAuthenticatedRequest(url, {
-        method: 'PATCH',
-        body: JSON.stringify({ status: apiStatus }),
-      }, 'Update Assignment Status');
+      if (isOnline) {
+        // Try to update on server
+        try {
+          const url = `${API_BASE_URL}/Assignments/${assignmentId}/status`;
+          
+          // Convert UI status to API status
+          const apiStatus = this.convertStatusToApi(status);
+          
+          const response = await this.makeAuthenticatedRequest(url, {
+            method: 'PATCH',
+            body: JSON.stringify({ status: apiStatus }),
+          }, 'Update Assignment Status');
 
-      await this.handleResponse(response, 'Update Assignment Status');
-      debugLogger.log('Assignment Status Updated', `UI Status: ${status}, API Status: ${apiStatus}`);
+          await this.handleResponse(response, 'Update Assignment Status');
+          debugLogger.log('Assignment Status Updated on Server', `UI Status: ${status}, API Status: ${apiStatus}`);
+          
+          // Update local cache
+          const assignments = await storageService.getOfflineAssignments();
+          const assignmentIndex = assignments.findIndex(a => a.assignmentId === assignmentId);
+          
+          if (assignmentIndex >= 0) {
+            assignments[assignmentIndex] = {
+              ...assignments[assignmentIndex],
+              status: status
+            };
+            await storageService.storeOfflineAssignments(assignments);
+          }
+          
+          return;
+        } catch (serverError) {
+          debugLogger.error('Server update failed, updating offline', serverError);
+          // Fall through to offline update
+        }
+      }
+
+      // Update offline assignment status
+      const assignments = await storageService.getOfflineAssignments();
+      const assignmentIndex = assignments.findIndex(a => a.assignmentId === assignmentId);
+      
+      if (assignmentIndex >= 0) {
+        assignments[assignmentIndex] = {
+          ...assignments[assignmentIndex],
+          status: status
+        };
+        await storageService.storeOfflineAssignments(assignments);
+        
+        // Add to offline queue for later sync
+        const { offlineService } = require('./OfflineService');
+        await offlineService.addToQueue({
+          type: 'UPDATE',
+          endpoint: `/Assignments/${assignmentId}/status`,
+          method: 'PATCH',
+          data: { status: this.convertStatusToApi(status) },
+          maxRetries: 3,
+          priority: 'MEDIUM',
+        });
+        
+        debugLogger.log('Assignment Status Updated Offline', `Assignment: ${assignmentId}, Status: ${status}`);
+      } else {
+        debugLogger.warn('Assignment not found in offline storage for status update', { assignmentId, status });
+      }
 
     } catch (error) {
       debugLogger.error('Update Assignment Status Error', error instanceof Error ? error.message : 'Unknown error');

@@ -29,7 +29,7 @@ export interface OfflineRequest {
   id: string;
   type: 'CREATE' | 'UPDATE' | 'DELETE' | 'SUBMIT';
   endpoint: string;
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   data?: any;
   timestamp: number;
   retryCount: number;

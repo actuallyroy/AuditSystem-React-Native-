@@ -364,6 +364,16 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
       logger.log('Connecting to SignalR');
       
+      // Check if we're online before attempting token validation
+      const { networkService } = require('../services/NetworkService');
+      const isOnline = await networkService.checkConnectivity();
+      
+      if (!isOnline) {
+        logger.log('Device is offline, skipping SignalR connection');
+        logger.log('Notifications will be available when connection is restored');
+        return;
+      }
+      
       // Validate token before attempting connection
       const isTokenValid = await authService.testTokenValidity();
       if (!isTokenValid) {

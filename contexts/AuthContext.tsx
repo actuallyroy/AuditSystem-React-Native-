@@ -85,9 +85,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   };
 
   const validateToken = async (token: string): Promise<boolean> => {
+    debugger
     try {
       setTokenValidating(true);
       logger.log('Validating token with server');
+      
+      // First check if we're online
+      const { networkService } = require('../services/NetworkService');
+      const isOnline = await networkService.checkConnectivity();
+      
+      if (!isOnline) {
+        logger.log('Device is offline, skipping server token validation');
+        logger.log('Assuming token is valid for offline mode');
+        return true; // Assume token is valid when offline
+      }
       
       // Add retry logic for token validation
       const maxRetries = 3;

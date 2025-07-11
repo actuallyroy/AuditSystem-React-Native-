@@ -62,6 +62,16 @@ class WebSocketNotificationService {
         return;
       }
 
+      // Check network connectivity before attempting connection
+      const { networkService } = require('./NetworkService');
+      const isOnline = await networkService.checkConnectivity();
+      
+      if (!isOnline) {
+        logger.log('Device is offline, skipping WebSocket connection');
+        logger.log('WebSocket connection will be attempted when network is available');
+        return;
+      }
+
       this.token = token;
       const url = `${WS_BASE_URL}?access_token=${token}`;
       
@@ -365,11 +375,24 @@ class WebSocketNotificationService {
     
     logger.log(`Scheduling reconnect attempt ${this.reconnectAttempts} in ${delay}ms`);
     
-    this.reconnectTimer = setTimeout(() => {
+    this.reconnectTimer = setTimeout(async () => {
       if (this.token) {
-        this.connect(this.token).catch((error) => {
+        try {
+          // Check network connectivity before attempting reconnection
+          const { networkService } = require('./NetworkService');
+          const isOnline = await networkService.checkConnectivity();
+          
+          if (!isOnline) {
+            logger.log('Device is offline, skipping reconnection attempt');
+            // Schedule another attempt later
+            this.scheduleReconnect();
+            return;
+          }
+          
+          await this.connect(this.token!);
+        } catch (error) {
           logger.error('Reconnection failed:', error);
-        });
+        }
       }
     }, delay);
   }

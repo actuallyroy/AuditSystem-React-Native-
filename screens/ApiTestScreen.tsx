@@ -24,6 +24,16 @@ export default function ApiTestScreen({ navigation }: any) {
     setTestResult('Testing API call...\n');
     
     try {
+      // Check network connectivity first
+      const { networkService } = require('../services/NetworkService');
+      const isOnline = await networkService.checkConnectivity();
+      
+      if (!isOnline) {
+        setTestResult(prev => prev + '❌ Device is offline, cannot test API\n');
+        Alert.alert('Offline', 'Device is offline. Please check your internet connection.');
+        return;
+      }
+      
       // Log the request details
       const requestBody = JSON.stringify({ username, password });
       const requestUrl = `${API_BASE_URL}/Auth/login`;
@@ -63,17 +73,19 @@ export default function ApiTestScreen({ navigation }: any) {
         const data = JSON.parse(responseText);
         setTestResult(prev => prev + `✅ JSON Parse Success:\n${JSON.stringify(data, null, 2)}\n`);
       } catch (parseError) {
-        setTestResult(prev => prev + `❌ JSON Parse Error: ${parseError.message}\n`);
+        const errorMessage = parseError instanceof Error ? parseError.message : String(parseError);
+        setTestResult(prev => prev + `❌ JSON Parse Error: ${errorMessage}\n`);
         setTestResult(prev => prev + `This confirms the JSON parsing issue!\n`);
         Alert.alert(
           'JSON Parse Error Confirmed',
-          `The server is not returning valid JSON.\n\nResponse: "${responseText}"\n\nError: ${parseError.message}`
+          `The server is not returning valid JSON.\n\nResponse: "${responseText}"\n\nError: ${errorMessage}`
         );
       }
 
     } catch (networkError) {
-      setTestResult(prev => prev + `❌ Network Error: ${networkError.message}\n`);
-      Alert.alert('Network Error', networkError.message);
+      const errorMessage = networkError instanceof Error ? networkError.message : String(networkError);
+      setTestResult(prev => prev + `❌ Network Error: ${errorMessage}\n`);
+      Alert.alert('Network Error', errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -84,6 +96,16 @@ export default function ApiTestScreen({ navigation }: any) {
     setTestResult('Testing basic connection...\n');
     
     try {
+      // Check network connectivity first
+      const { networkService } = require('../services/NetworkService');
+      const isOnline = await networkService.checkConnectivity();
+      
+      if (!isOnline) {
+        setTestResult(prev => prev + '❌ Device is offline, cannot test connection\n');
+        Alert.alert('Offline', 'Device is offline. Please check your internet connection.');
+        return;
+      }
+      
       const response = await fetch(`${API_BASE_URL}/health`, {
         method: 'GET',
         headers: {
@@ -95,7 +117,8 @@ export default function ApiTestScreen({ navigation }: any) {
       const text = await response.text();
       setTestResult(prev => prev + `Health Check Response: "${text}"\n`);
     } catch (error) {
-      setTestResult(prev => prev + `❌ Connection Error: ${error.message}\n`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setTestResult(prev => prev + `❌ Connection Error: ${errorMessage}\n`);
     } finally {
       setIsLoading(false);
     }
