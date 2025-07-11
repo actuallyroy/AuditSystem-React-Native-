@@ -69,44 +69,72 @@ export default function InProgressScreen() {
       const assignmentAuditPairs = (await Promise.all(auditFetches)).filter(Boolean);
 
       // Convert to InProgressItem format
-      const inProgressData: InProgressItem[] = assignmentAuditPairs.map(pair => {
-        const { assignment, audit } = pair as { assignment: Assignment; audit: AuditResponseDto };
-        // Parse store info
-        let storeName = 'Unknown Store';
-        let address = 'Address not available';
-        if (assignment.storeInfo) {
-          try {
-            const storeData = JSON.parse(assignment.storeInfo);
-            storeName = storeData.name || storeData.storeName || 'Unknown Store';
-            address = storeData.address || 'Address not available';
-          } catch {
-            storeName = assignment.storeInfo;
+      const inProgressData: InProgressItem[] = await Promise.all(
+        assignmentAuditPairs.map(async pair => {
+          const { assignment, audit } = pair as { assignment: Assignment; audit: AuditResponseDto };
+          // Parse store info (use logic from AuditListScreen)
+          let storeName = 'Unknown Store';
+          let address = 'Address not available';
+          if (assignment.storeInfo) {
+            try {
+              const storeData = JSON.parse(assignment.storeInfo);
+              storeName = storeData.name || storeData.storeName || 'Unknown Store';
+              address = storeData.address || 'Address not available';
+            } catch {
+              storeName = assignment.storeInfo;
+            }
           }
-        }
-        // Calculate completion percentage (optional: can be improved)
-        let completionPercentage = 0;
-        let completedSections = 0;
-        let totalSections = 5; // Default section count
-        // You can improve this by using audit.responses and template info
-        if (audit) {
-          completionPercentage = 50; // Placeholder
-          completedSections = 2; // Placeholder
-        }
-        return {
-          id: audit.auditId || assignment.assignmentId,
-          assignmentId: assignment.assignmentId,
-          storeName,
-          address,
-          lastUpdated: audit.createdAt || assignment.createdAt,
-          completionPercentage,
-          sections: {
-            total: totalSections,
-            completed: completedSections
-          },
-          templateName: assignment.template.name || 'Unknown Template',
-          dueDate: assignment.dueDate || new Date().toISOString()
-        };
-      });
+
+          // Fetch template details for section/question counts
+          let totalSections = 0;
+          let completedSections = 0;
+          let totalQuestions = 0;
+          let answeredQuestions = 0;
+          let completionPercentage = 0;
+          try {
+            const template = await authService.getTemplateDetails(audit.templateId);
+            // Parse questions if needed (handle string case)
+            let questionsObj = template.questions;
+            if (typeof questionsObj === 'string') {
+              try {
+                questionsObj = JSON.parse(questionsObj);
+              } catch {
+                questionsObj = { sections: [] };
+              }
+            }
+            const sections = questionsObj.sections || [];
+            totalSections = sections.length;
+            // Flatten all questions
+            const allQuestions = sections.flatMap(section => section.questions);
+            totalQuestions = allQuestions.length;
+            // Get answered question IDs
+            const answeredIds = audit.responses ? Object.keys(audit.responses) : [];
+            answeredQuestions = allQuestions.filter(q => answeredIds.includes(q.id)).length;
+            // Completed sections: all questions in section are answered
+            completedSections = sections.filter(section =>
+              section.questions.every(q => answeredIds.includes(q.id))
+            ).length;
+            completionPercentage = totalQuestions > 0 ? Math.round((answeredQuestions / totalQuestions) * 100) : 0;
+          } catch (e) {
+            // fallback to 0s if template fetch fails
+          }
+
+          return {
+            id: audit.auditId || assignment.assignmentId,
+            assignmentId: assignment.assignmentId,
+            storeName,
+            address,
+            lastUpdated: audit.createdAt || assignment.createdAt,
+            completionPercentage,
+            sections: {
+              total: totalQuestions, // now represents questions
+              completed: answeredQuestions // now represents answered questions
+            },
+            templateName: assignment.template.name || 'Unknown Template',
+            dueDate: assignment.dueDate || new Date().toISOString()
+          };
+        })
+      );
 
       setInProgressItems(inProgressData);
       
@@ -171,7 +199,7 @@ export default function InProgressScreen() {
         <View style={styles.progressContainer}>
           <View style={styles.progressInfo}>
             <Text style={styles.progressText}>
-              {item.sections.completed}/{item.sections.total} Sections
+              {item.sections.completed}/{item.sections.total} Questions
             </Text>
             <Text style={styles.progressPercentage}>
               {item.completionPercentage}%

@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert, Ac
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../contexts/AuthContext';
+import { useDevMode } from '../contexts/DevModeContext';
 import { useNavigation } from '@react-navigation/native';
 import { backgroundSyncService } from '../services/BackgroundSyncService';
 import { auditService } from '../services/AuditService';
@@ -15,6 +16,7 @@ export default function SettingsScreen() {
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const { user, logout } = useAuth();
+  const { isDevModeEnabled, toggleDevMode } = useDevMode();
   const navigation = useNavigation();
 
   const handleLogout = () => {
@@ -82,12 +84,12 @@ export default function SettingsScreen() {
   const handleManualSync = async () => {
     setSyncing(true);
     try {
-      const result = await backgroundSyncService.manualSync();
+      const result = await backgroundSyncService.triggerSync();
       
-      if (result.success > 0 || result.completed > 0) {
+      if (result.synced > 0 || result.completed > 0) {
         const message = result.completed > 0 
-          ? `Successfully synced ${result.success} audits and submitted ${result.completed} completed audits`
-          : `Successfully synced ${result.success} audits`;
+          ? `Successfully synced ${result.synced} audits and submitted ${result.completed} completed audits`
+          : `Successfully synced ${result.synced} audits`;
         
         Alert.alert('Sync Complete', message);
       } else if (result.failed > 0) {
@@ -224,6 +226,14 @@ export default function SettingsScreen() {
             biometricEnabled,
             setBiometricEnabled
           )}
+          
+          {renderSettingItem(
+            "code-slash-outline",
+            "Developer Mode",
+            "Enable debug alerts and developer tools",
+            isDevModeEnabled,
+            toggleDevMode
+          )}
         </View>
 
         {/* Data Management */}
@@ -246,6 +256,58 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        {/* Developer Tools - Only show when dev mode is enabled */}
+        {isDevModeEnabled && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Developer Tools</Text>
+            
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => navigation.navigate('Debug' as never)}
+            >
+              <Ionicons name="bug-outline" size={24} color="#0066CC" />
+              <Text style={styles.menuItemText}>Debug Console</Text>
+              <Ionicons name="chevron-forward" size={20} color="#6c757d" />
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => navigation.navigate('ApiTest' as never)}
+            >
+              <Ionicons name="flash-outline" size={24} color="#dc3545" />
+              <Text style={styles.menuItemText}>API Test Tool</Text>
+              <Ionicons name="chevron-forward" size={20} color="#6c757d" />
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => navigation.navigate('LocalStorageViewer' as never)}
+            >
+              <Ionicons name="folder-outline" size={24} color="#28a745" />
+              <Text style={styles.menuItemText}>Local Storage Viewer</Text>
+              <Ionicons name="chevron-forward" size={20} color="#6c757d" />
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => navigation.navigate('NetworkStatus' as never)}
+            >
+              <Ionicons name="wifi-outline" size={24} color="#17a2b8" />
+              <Text style={styles.menuItemText}>Network Status</Text>
+              <Ionicons name="chevron-forward" size={20} color="#6c757d" />
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.menuItem}
+              onPress={() => navigation.navigate('AppStateMonitor' as never)}
+            >
+              <Ionicons name="analytics-outline" size={24} color="#6f42c1" />
+              <Text style={styles.menuItemText}>App State Monitor</Text>
+              <Ionicons name="chevron-forward" size={20} color="#6c757d" />
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* About & Help */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>About & Help</Text>
@@ -259,24 +321,6 @@ export default function SettingsScreen() {
           <TouchableOpacity style={styles.menuItem}>
             <Ionicons name="document-text-outline" size={24} color="#0066CC" />
             <Text style={styles.menuItemText}>Terms & Privacy Policy</Text>
-            <Ionicons name="chevron-forward" size={20} color="#6c757d" />
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.menuItem}
-            onPress={() => navigation.navigate('Debug' as never)}
-          >
-            <Ionicons name="bug-outline" size={24} color="#0066CC" />
-            <Text style={styles.menuItemText}>Debug Console</Text>
-            <Ionicons name="chevron-forward" size={20} color="#6c757d" />
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={styles.menuItem}
-            onPress={() => navigation.navigate('ApiTest' as never)}
-          >
-            <Ionicons name="flash-outline" size={24} color="#dc3545" />
-            <Text style={styles.menuItemText}>API Test Tool</Text>
             <Ionicons name="chevron-forward" size={20} color="#6c757d" />
           </TouchableOpacity>
           

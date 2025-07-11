@@ -313,6 +313,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
         // App has come to the foreground
         logger.log('App came to foreground, checking SignalR connection');
+        // Enable retry attempts when app comes to foreground
+        WebSocketNotificationService.setRetryEnabled(true);
         if (isAuthenticated && user?.token && !loading && !tokenValidating) {
           connectToSignalR();
         }
@@ -323,6 +325,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       } else if (appStateRef.current === 'active' && nextAppState.match(/inactive|background/)) {
         // App has gone to the background
         logger.log('App went to background');
+        // Disable retry attempts when app goes to background to save battery
+        WebSocketNotificationService.setRetryEnabled(false);
         // Don't disconnect immediately, let SignalR handle reconnection
       }
       appStateRef.current = nextAppState;
@@ -348,6 +352,33 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       }
     };
   }, []);
+
+  // Set up network connectivity listener
+  useEffect(() => {
+    const { networkService } = require('../services/NetworkService');
+    
+    const unsubscribe = networkService.addListener(async (isConnected: boolean) => {
+      if (isConnected) {
+        logger.log('Network connection restored, attempting WebSocket reconnection');
+        // Enable retry attempts when network is restored
+        WebSocketNotificationService.setRetryEnabled(true);
+        
+        // If we're authenticated and not connected, try to connect
+        if (isAuthenticated && user?.token && !loading && !tokenValidating && !state.isConnected) {
+          try {
+            await connectToSignalR();
+          } catch (error) {
+            logger.error('Failed to reconnect after network restoration:', error);
+          }
+        }
+      } else {
+        logger.log('Network connection lost');
+        // Don't disable retry attempts here, let the WebSocket service handle it
+      }
+    });
+
+    return unsubscribe;
+  }, [isAuthenticated, user?.token, loading, tokenValidating, state.isConnected]);
 
   const connectToSignalR = async () => {
     try {

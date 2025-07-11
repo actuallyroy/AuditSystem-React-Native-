@@ -12,6 +12,7 @@ class DebugLogger {
   private maxLogs = 100;
   private showAlertsForErrors = true;
   private logLevel: 'debug' | 'info' | 'warn' | 'error' = 'warn';
+  private isDevModeEnabled = false;
 
   setLogLevel(level: 'debug' | 'info' | 'warn' | 'error') {
     this.logLevel = level;
@@ -29,7 +30,7 @@ class DebugLogger {
       this.addLog('error', message, data);
       console.error(message, data);
       
-      if (this.showAlertsForErrors) {
+      if (this.showAlertsForErrors && this.isDevModeEnabled) {
         Alert.alert(
           'Debug Error',
           `${message}\n\nData: ${data ? JSON.stringify(data, null, 2) : 'None'}`,
@@ -106,6 +107,19 @@ class DebugLogger {
   setShowAlertsForErrors(show: boolean) {
     this.showAlertsForErrors = show;
   }
+
+  setDevModeEnabled(enabled: boolean) {
+    this.isDevModeEnabled = enabled;
+  }
+
+  isDevModeActive(): boolean {
+    return this.isDevModeEnabled;
+  }
 }
 
-export const debugLogger = new DebugLogger(); 
+export const debugLogger = new DebugLogger();
+
+// Function to update debug logger with dev mode state
+export const updateDebugLoggerDevMode = (enabled: boolean) => {
+  debugLogger.setDevModeEnabled(enabled);
+}; 

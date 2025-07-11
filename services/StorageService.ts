@@ -58,12 +58,20 @@ class StorageService {
    */
   async storeAuthData(authResponse: AuthResponse): Promise<void> {
     try {
+      console.log('StorageService: Storing auth data:', {
+        token: authResponse.token ? `${authResponse.token.substring(0, 10)}...` : 'null',
+        userId: authResponse.userId,
+        hasUserData: !!authResponse
+      });
+      
       await AsyncStorage.multiSet([
         [STORAGE_KEYS.AUTH_TOKEN, authResponse.token],
         [STORAGE_KEYS.USER_ID, authResponse.userId],
         [STORAGE_KEYS.USER_DATA, JSON.stringify(authResponse)],
         [STORAGE_KEYS.IS_AUTHENTICATED, 'true'],
       ]);
+      
+      console.log('StorageService: Auth data stored successfully');
     } catch (error) {
       console.error('Error storing auth data:', error);
       throw new Error('Failed to store authentication data');
@@ -75,7 +83,24 @@ class StorageService {
    */
   async getAuthToken(): Promise<string | null> {
     try {
-      return await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+      let token = await AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+      console.log('StorageService: getAuthToken - direct token:', token ? 'exists' : 'null');
+      
+      // If individual token is null, try to get it from user_data
+      if (!token) {
+        console.log('StorageService: getAuthToken - token is null, checking user_data');
+        const userData = await this.getUserData();
+        if (userData && userData.token) {
+          console.log('StorageService: getAuthToken - found token in user_data, storing individually');
+          // Store the token individually for future use
+          await AsyncStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, userData.token);
+          token = userData.token;
+        } else {
+          console.log('StorageService: getAuthToken - no token found in user_data either');
+        }
+      }
+      
+      return token;
     } catch (error) {
       console.error('Error getting auth token:', error);
       return null;
@@ -87,7 +112,24 @@ class StorageService {
    */
   async getUserId(): Promise<string | null> {
     try {
-      return await AsyncStorage.getItem(STORAGE_KEYS.USER_ID);
+      let userId = await AsyncStorage.getItem(STORAGE_KEYS.USER_ID);
+      console.log('StorageService: getUserId - direct userId:', userId ? 'exists' : 'null');
+      
+      // If individual userId is null, try to get it from user_data
+      if (!userId) {
+        console.log('StorageService: getUserId - userId is null, checking user_data');
+        const userData = await this.getUserData();
+        if (userData && userData.userId) {
+          console.log('StorageService: getUserId - found userId in user_data, storing individually');
+          // Store the userId individually for future use
+          await AsyncStorage.setItem(STORAGE_KEYS.USER_ID, userData.userId);
+          userId = userData.userId;
+        } else {
+          console.log('StorageService: getUserId - no userId found in user_data either');
+        }
+      }
+      
+      return userId;
     } catch (error) {
       console.error('Error getting user ID:', error);
       return null;
@@ -104,6 +146,29 @@ class StorageService {
     } catch (error) {
       console.error('Error getting user data:', error);
       return null;
+    }
+  }
+
+  /**
+   * Synchronize auth data to ensure individual values match user_data
+   */
+  async syncAuthData(): Promise<void> {
+    try {
+      const userData = await this.getUserData();
+      if (userData) {
+        console.log('StorageService: Syncing auth data. Current user_data:', userData);
+        // Ensure individual values are set correctly
+        await AsyncStorage.multiSet([
+          [STORAGE_KEYS.AUTH_TOKEN, userData.token],
+          [STORAGE_KEYS.USER_ID, userData.userId],
+          [STORAGE_KEYS.IS_AUTHENTICATED, 'true'],
+        ]);
+        console.log('StorageService: Auth data synced successfully.');
+      } else {
+        console.warn('StorageService: No user data found to sync.');
+      }
+    } catch (error) {
+      console.error('Error syncing auth data:', error);
     }
   }
 
@@ -184,6 +249,155 @@ class StorageService {
     } catch (error) {
       console.error('Error removing data:', error);
       throw new Error('Failed to remove data');
+    }
+  }
+
+  /**
+   * Test method to manually store and retrieve auth data
+   */
+  async testAuthStorage(): Promise<{
+    success: boolean;
+    stored: { token: string; userId: string } | null;
+    retrieved: { token: string | null; userId: string | null } | null;
+    error?: string;
+  }> {
+    try {
+      console.log('StorageService: Testing auth storage operations');
+      
+      // Test data
+      const testToken = 'test_token_' + Date.now();
+      const testUserId = 'test_user_' + Date.now();
+      
+      // Store test data
+      await AsyncStorage.multiSet([
+        [STORAGE_KEYS.AUTH_TOKEN, testToken],
+        [STORAGE_KEYS.USER_ID, testUserId],
+      ]);
+      
+      console.log('StorageService: Test data stored');
+      
+      // Retrieve test data
+      const [retrievedToken, retrievedUserId] = await Promise.all([
+        AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN),
+        AsyncStorage.getItem(STORAGE_KEYS.USER_ID),
+      ]);
+      
+      console.log('StorageService: Test data retrieved:', {
+        stored: { token: testToken, userId: testUserId },
+        retrieved: { token: retrievedToken, userId: retrievedUserId }
+      });
+      
+      // Clean up test data
+      await AsyncStorage.multiRemove([
+        STORAGE_KEYS.AUTH_TOKEN,
+        STORAGE_KEYS.USER_ID,
+      ]);
+      
+      const success = retrievedToken === testToken && retrievedUserId === testUserId;
+      
+      return {
+        success,
+        stored: { token: testToken, userId: testUserId },
+        retrieved: { token: retrievedToken, userId: retrievedUserId },
+        error: success ? undefined : 'Retrieved values do not match stored values'
+      };
+    } catch (error) {
+      console.error('StorageService: Test auth storage failed:', error);
+      return {
+        success: false,
+        stored: null,
+        retrieved: null,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  /**
+   * Force re-store auth data from user_data (useful for fixing inconsistencies)
+   */
+  async forceRestoreAuthData(): Promise<void> {
+    try {
+      console.log('StorageService: Force restoring auth data from user_data');
+      const userData = await this.getUserData();
+      if (userData && userData.token && userData.userId) {
+        console.log('StorageService: Found valid user_data, re-storing individual values');
+        await AsyncStorage.multiSet([
+          [STORAGE_KEYS.AUTH_TOKEN, userData.token],
+          [STORAGE_KEYS.USER_ID, userData.userId],
+          [STORAGE_KEYS.IS_AUTHENTICATED, 'true'],
+        ]);
+        console.log('StorageService: Auth data force restored successfully');
+      } else {
+        console.warn('StorageService: No valid user_data found for force restore');
+      }
+    } catch (error) {
+      console.error('Error force restoring auth data:', error);
+    }
+  }
+
+  /**
+   * Debug method to inspect auth storage values
+   */
+  async debugAuthStorage(): Promise<{
+    authToken: string | null;
+    userId: string | null;
+    userData: any;
+    userDataRaw: string | null;
+    isAuthenticated: string | null;
+    allKeys: string[];
+    userDataKeys: string[];
+  }> {
+    try {
+      const [authToken, userId, userDataRaw, isAuthenticated, allKeys] = await Promise.all([
+        AsyncStorage.getItem(STORAGE_KEYS.AUTH_TOKEN),
+        AsyncStorage.getItem(STORAGE_KEYS.USER_ID),
+        AsyncStorage.getItem(STORAGE_KEYS.USER_DATA),
+        AsyncStorage.getItem(STORAGE_KEYS.IS_AUTHENTICATED),
+        AsyncStorage.getAllKeys(),
+      ]);
+
+      let userData = null;
+      let userDataKeys: string[] = [];
+      
+      if (userDataRaw) {
+        try {
+          userData = JSON.parse(userDataRaw);
+          userDataKeys = Object.keys(userData || {});
+        } catch (parseError) {
+          console.error('Error parsing user_data:', parseError);
+        }
+      }
+
+      console.log('StorageService: Debug Auth Storage Details:', {
+        authToken: authToken ? `${authToken.substring(0, 10)}...` : 'null',
+        userId,
+        userDataRaw: userDataRaw ? `${userDataRaw.substring(0, 100)}...` : 'null',
+        userData,
+        userDataKeys,
+        isAuthenticated,
+        allKeys: allKeys.filter(key => key.includes('auth') || key.includes('user') || key.includes('token'))
+      });
+
+      return {
+        authToken,
+        userId,
+        userData,
+        userDataRaw,
+        isAuthenticated,
+        allKeys: [...allKeys],
+        userDataKeys,
+      };
+    } catch (error) {
+      console.error('Error debugging auth storage:', error);
+      return {
+        authToken: null,
+        userId: null,
+        userData: null,
+        userDataRaw: null,
+        isAuthenticated: null,
+        allKeys: [],
+        userDataKeys: [],
+      };
     }
   }
 

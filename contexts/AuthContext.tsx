@@ -58,6 +58,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         if (userData && userData.token) {
           logger.log('User data found, validating token');
           
+          // Sync auth data to ensure individual values are set
+          await storageService.syncAuthData();
+          
           // Validate token before setting authenticated state
           const isTokenValid = await validateToken(userData.token);
           if (isTokenValid) {
@@ -179,6 +182,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       await storageService.storeAuthData(authResponse);
+      
+      // Sync auth data to ensure individual values are set
+      await storageService.syncAuthData();
+      
       setUser(authResponse);
       setIsAuthenticated(true);
       
@@ -218,6 +225,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       
       await storageService.storeAuthData(authResponse);
+      
+      // Sync auth data to ensure individual values are set
+      await storageService.syncAuthData();
+      
       setUser(authResponse);
       setIsAuthenticated(true);
       

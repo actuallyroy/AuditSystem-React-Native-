@@ -3,6 +3,7 @@ import { View, Text, Button, ScrollView, StyleSheet, TouchableOpacity, Alert } f
 import { storageService } from '../services/StorageService';
 import { authService } from '../services/AuthService';
 import { debugLogger } from '../utils/DebugLogger';
+import { useDevMode } from '../contexts/DevModeContext';
 
 const BASE_WS_URL = 'wss://test.scorptech.co/hubs/notifications';
 const ECHO_URL = 'wss://echo.websocket.events';
@@ -20,6 +21,7 @@ const DebugScreen: React.FC = () => {
   const [token, setToken] = useState<string | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const { isDevModeEnabled } = useDevMode();
 
   const log = (msg: string) => {
     setLogs((prev) => [...prev, `${new Date().toISOString()} | ${msg}`]);
@@ -59,16 +61,20 @@ const DebugScreen: React.FC = () => {
         result.details.errors.forEach(error => log(`  - ${error}`));
       }
       
-      // Show alert with summary
-      Alert.alert(
-        'Token Validation Test',
-        `Result: ${result.success ? 'SUCCESS' : 'FAILED'}\n\nNetwork: ${result.details.isOnline ? 'Online' : 'Offline'}\nToken: ${result.details.hasToken ? 'Present' : 'Missing'}\nUser ID: ${result.details.hasUserId ? 'Present' : 'Missing'}\nValidate Token: ${result.details.validateTokenEndpoint?.success ? 'OK' : 'FAILED'}\n\nErrors: ${result.details.errors.length}`,
-        [{ text: 'OK' }]
-      );
+      // Show alert with summary only if dev mode is enabled
+      if (isDevModeEnabled) {
+        Alert.alert(
+          'Token Validation Test',
+          `Result: ${result.success ? 'SUCCESS' : 'FAILED'}\n\nNetwork: ${result.details.isOnline ? 'Online' : 'Offline'}\nToken: ${result.details.hasToken ? 'Present' : 'Missing'}\nUser ID: ${result.details.hasUserId ? 'Present' : 'Missing'}\nValidate Token: ${result.details.validateTokenEndpoint?.success ? 'OK' : 'FAILED'}\n\nErrors: ${result.details.errors.length}`,
+          [{ text: 'OK' }]
+        );
+      }
       
     } catch (error) {
       log(`Token validation test error: ${error instanceof Error ? error.message : String(error)}`);
-      Alert.alert('Error', `Token validation test failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (isDevModeEnabled) {
+        Alert.alert('Error', `Token validation test failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     } finally {
       setIsValidating(false);
     }
@@ -104,16 +110,20 @@ const DebugScreen: React.FC = () => {
         result.details.errors.forEach(error => log(`  - ${error}`));
       }
       
-      // Show alert with summary
-      Alert.alert(
-        'API Connectivity Test',
-        `Result: ${result.success ? 'SUCCESS' : 'FAILED'}\n\nNetwork: ${result.details.networkCheck ? 'Online' : 'Offline'}\nHealth: ${result.details.healthEndpoint?.success ? 'OK' : 'FAILED'}\nAuth: ${result.details.authEndpoint?.success ? 'OK' : 'FAILED'}\nValidate Token: ${result.details.validateTokenEndpoint?.success ? 'OK' : 'FAILED'}\n\nErrors: ${result.details.errors.length}`,
-        [{ text: 'OK' }]
-      );
+      // Show alert with summary only if dev mode is enabled
+      if (isDevModeEnabled) {
+        Alert.alert(
+          'API Connectivity Test',
+          `Result: ${result.success ? 'SUCCESS' : 'FAILED'}\n\nNetwork: ${result.details.networkCheck ? 'Online' : 'Offline'}\nHealth: ${result.details.healthEndpoint?.success ? 'OK' : 'FAILED'}\nAuth: ${result.details.authEndpoint?.success ? 'OK' : 'FAILED'}\nValidate Token: ${result.details.validateTokenEndpoint?.success ? 'OK' : 'FAILED'}\n\nErrors: ${result.details.errors.length}`,
+          [{ text: 'OK' }]
+        );
+      }
       
     } catch (error) {
       log(`API connectivity test error: ${error instanceof Error ? error.message : String(error)}`);
-      Alert.alert('Error', `API connectivity test failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (isDevModeEnabled) {
+        Alert.alert('Error', `API connectivity test failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     } finally {
       setIsValidating(false);
     }
@@ -137,16 +147,20 @@ const DebugScreen: React.FC = () => {
         log(`Error: ${result.details.error}`);
       }
       
-      // Show alert with summary
-      Alert.alert(
-        'Specific Token Test',
-        `Result: ${result.success ? 'SUCCESS' : 'FAILED'}\n\nStatus: ${result.details.status}\nResponse: ${result.details.response.substring(0, 100)}${result.details.response.length > 100 ? '...' : ''}`,
-        [{ text: 'OK' }]
-      );
+      // Show alert with summary only if dev mode is enabled
+      if (isDevModeEnabled) {
+        Alert.alert(
+          'Specific Token Test',
+          `Result: ${result.success ? 'SUCCESS' : 'FAILED'}\n\nStatus: ${result.details.status}\nResponse: ${result.details.response.substring(0, 100)}${result.details.response.length > 100 ? '...' : ''}`,
+          [{ text: 'OK' }]
+        );
+      }
       
     } catch (error) {
       log(`Specific token test error: ${error instanceof Error ? error.message : String(error)}`);
-      Alert.alert('Error', `Specific token test failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (isDevModeEnabled) {
+        Alert.alert('Error', `Specific token test failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
     } finally {
       setIsValidating(false);
     }
@@ -154,14 +168,16 @@ const DebugScreen: React.FC = () => {
 
   const showDebugLogs = () => {
     const logsString = debugLogger.getLogsAsString();
-    Alert.alert(
-      'Debug Logs',
-      logsString || 'No logs available',
-      [
-        { text: 'Clear Logs', onPress: () => debugLogger.clearLogs() },
-        { text: 'OK' }
-      ]
-    );
+    if (isDevModeEnabled) {
+      Alert.alert(
+        'Debug Logs',
+        logsString || 'No logs available',
+        [
+          { text: 'Clear Logs', onPress: () => debugLogger.clearLogs() },
+          { text: 'OK' }
+        ]
+      );
+    }
   };
 
   useEffect(() => {

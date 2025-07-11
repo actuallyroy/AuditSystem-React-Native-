@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNotifications } from '../contexts/NotificationContext';
+import { useDevMode } from '../contexts/DevModeContext';
 import { debugLogger } from '../utils/DebugLogger';
 
 interface NotificationScreenProps {
@@ -20,6 +21,7 @@ interface NotificationScreenProps {
 const NotificationScreen: React.FC<NotificationScreenProps> = ({ navigation }) => {
   const { state, markAsRead, markAllAsRead, deleteNotification, loadNotificationsFromStorage } = useNotifications();
   const { notifications, unreadCount, connectionStats, isConnected, deliveryAcknowledgedCount } = state;
+  const { isDevModeEnabled } = useDevMode();
   const [refreshing, setRefreshing] = useState(false);
 
   const handleMarkAsRead = async (notificationId: string) => {
@@ -196,14 +198,16 @@ const NotificationScreen: React.FC<NotificationScreenProps> = ({ navigation }) =
       <Text style={styles.emptyStateMessage}>
         You'll see notifications here when you receive them.
       </Text>
-      <View style={styles.connectionStatus}>
-        <Text style={styles.connectionStatusText}>
-          WebSocket Status: {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
-        </Text>
-        <Text style={styles.connectionId}>
-          Uptime: {Math.floor(connectionStats.uptime / 1000)}s | Reconnects: {connectionStats.reconnectAttempts}
-        </Text>
-      </View>
+      {isDevModeEnabled && (
+        <View style={styles.connectionStatus}>
+          <Text style={styles.connectionStatusText}>
+            WebSocket Status: {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+          </Text>
+          <Text style={styles.connectionId}>
+            Uptime: {Math.floor(connectionStats.uptime / 1000)}s | Reconnects: {connectionStats.reconnectAttempts}
+          </Text>
+        </View>
+      )}
     </View>
   );
 

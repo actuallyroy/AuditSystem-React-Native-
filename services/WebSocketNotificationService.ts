@@ -41,6 +41,7 @@ class WebSocketNotificationService {
   private maxReconnectAttempts = 10;
   private reconnectInterval = 5000;
   private isReconnecting = false;
+  private shouldKeepRetrying = true;
   private connectionStartTime: Date | null = null;
   private lastHeartbeat: Date | null = null;
   private pendingMessages = 0;
@@ -86,6 +87,7 @@ class WebSocketNotificationService {
       this.connectionStartTime = new Date();
       this.reconnectAttempts = 0;
       this.isReconnecting = false;
+      this.shouldKeepRetrying = true;
       
       logger.log('WebSocket connection established');
       
@@ -361,8 +363,8 @@ class WebSocketNotificationService {
   }
 
   private scheduleReconnect(): void {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      logger.error('Max reconnection attempts reached');
+    if (!this.shouldKeepRetrying) {
+      logger.log('Reconnection disabled, stopping retry attempts');
       return;
     }
 
@@ -371,27 +373,37 @@ class WebSocketNotificationService {
     }
 
     this.reconnectAttempts++;
-    const delay = Math.min(this.reconnectInterval * this.reconnectAttempts, 30000);
+    const delay = Math.min(this.reconnectInterval * Math.min(this.reconnectAttempts, 5), 30000);
     
     logger.log(`Scheduling reconnect attempt ${this.reconnectAttempts} in ${delay}ms`);
     
     this.reconnectTimer = setTimeout(async () => {
-      if (this.token) {
+      if (this.token && this.shouldKeepRetrying) {
         try {
           // Check network connectivity before attempting reconnection
           const { networkService } = require('./NetworkService');
           const isOnline = await networkService.checkConnectivity();
           
           if (!isOnline) {
-            logger.log('Device is offline, skipping reconnection attempt');
+            logger.log('Device is offline, scheduling another reconnection attempt');
             // Schedule another attempt later
             this.scheduleReconnect();
+            return;
+          }
+          
+          // Check if we're already connected
+          if (this.ws?.readyState === WebSocket.OPEN) {
+            logger.log('Already connected, stopping reconnection attempts');
             return;
           }
           
           await this.connect(this.token!);
         } catch (error) {
           logger.error('Reconnection failed:', error);
+          // Continue retrying even after max attempts if device is online
+          if (this.shouldKeepRetrying) {
+            this.scheduleReconnect();
+          }
         }
       }
     }, delay);
@@ -399,6 +411,9 @@ class WebSocketNotificationService {
 
   async disconnect(): Promise<void> {
     try {
+      // Stop retry attempts
+      this.shouldKeepRetrying = false;
+      
       if (this.reconnectTimer) {
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
@@ -619,6 +634,34 @@ class WebSocketNotificationService {
       lastHeartbeat: this.lastHeartbeat,
       pendingMessages: this.pendingMessages
     };
+  }
+
+  setRetryEnabled(enabled: boolean): void {
+    this.shouldKeepRetrying = enabled;
+    if (!enabled && this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    logger.log(`WebSocket retry attempts ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
+  async forceReconnect(): Promise<void> {
+    logger.log('Force reconnection requested');
+    this.reconnectAttempts = 0; // Reset attempt counter
+    this.shouldKeepRetrying = true;
+    
+    if (this.ws) {
+      this.ws.close();
+    }
+    
+    if (this.token) {
+      try {
+        await this.connect(this.token);
+      } catch (error) {
+        logger.error('Force reconnection failed:', error);
+        throw error;
+      }
+    }
   }
 
   // Test basic WebSocket connectivity

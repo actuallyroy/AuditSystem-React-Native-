@@ -10,6 +10,7 @@ import {
   Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useDevMode } from '../contexts/DevModeContext';
 
 const API_BASE_URL = 'https://test.scorptech.co/api/v1';
 
@@ -18,6 +19,7 @@ export default function ApiTestScreen({ navigation }: any) {
   const [password, setPassword] = useState('');
   const [testResult, setTestResult] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const { isDevModeEnabled } = useDevMode();
 
   const testApiCall = async () => {
     setIsLoading(true);
@@ -30,7 +32,9 @@ export default function ApiTestScreen({ navigation }: any) {
       
       if (!isOnline) {
         setTestResult(prev => prev + '❌ Device is offline, cannot test API\n');
-        Alert.alert('Offline', 'Device is offline. Please check your internet connection.');
+        if (isDevModeEnabled) {
+          Alert.alert('Offline', 'Device is offline. Please check your internet connection.');
+        }
         return;
       }
       
@@ -64,7 +68,9 @@ export default function ApiTestScreen({ navigation }: any) {
 
       if (responseText.length === 0) {
         setTestResult(prev => prev + '❌ ERROR: Empty response from server\n');
-        Alert.alert('Empty Response', 'The server returned an empty response. This is the cause of the JSON parse error.');
+        if (isDevModeEnabled) {
+          Alert.alert('Empty Response', 'The server returned an empty response. This is the cause of the JSON parse error.');
+        }
         return;
       }
 
@@ -76,16 +82,20 @@ export default function ApiTestScreen({ navigation }: any) {
         const errorMessage = parseError instanceof Error ? parseError.message : String(parseError);
         setTestResult(prev => prev + `❌ JSON Parse Error: ${errorMessage}\n`);
         setTestResult(prev => prev + `This confirms the JSON parsing issue!\n`);
-        Alert.alert(
-          'JSON Parse Error Confirmed',
-          `The server is not returning valid JSON.\n\nResponse: "${responseText}"\n\nError: ${errorMessage}`
-        );
+        if (isDevModeEnabled) {
+          Alert.alert(
+            'JSON Parse Error Confirmed',
+            `The server is not returning valid JSON.\n\nResponse: "${responseText}"\n\nError: ${errorMessage}`
+          );
+        }
       }
 
     } catch (networkError) {
       const errorMessage = networkError instanceof Error ? networkError.message : String(networkError);
       setTestResult(prev => prev + `❌ Network Error: ${errorMessage}\n`);
-      Alert.alert('Network Error', errorMessage);
+      if (isDevModeEnabled) {
+        Alert.alert('Network Error', errorMessage);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -102,7 +112,9 @@ export default function ApiTestScreen({ navigation }: any) {
       
       if (!isOnline) {
         setTestResult(prev => prev + '❌ Device is offline, cannot test connection\n');
-        Alert.alert('Offline', 'Device is offline. Please check your internet connection.');
+        if (isDevModeEnabled) {
+          Alert.alert('Offline', 'Device is offline. Please check your internet connection.');
+        }
         return;
       }
       

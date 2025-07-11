@@ -8,8 +8,10 @@ import { Toaster } from 'sonner-native';
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { NotificationProvider } from "./contexts/NotificationContext";
 import { OfflineProvider } from "./contexts/OfflineContext";
+import { DevModeProvider } from "./contexts/DevModeContext";
 import { backgroundSyncService } from "./services/BackgroundSyncService";
 import OfflineIndicator from "./components/OfflineIndicator";
+import DevModeIndicator from "./components/DevModeIndicator";
 import TokenValidationScreen from "./components/TokenValidationScreen";
 import HomeScreen from "./screens/HomeScreen"
 import AuditDetailScreen from "./screens/AuditDetailScreen";
@@ -27,6 +29,10 @@ import ApiTestScreen from "./screens/ApiTestScreen";
 import NotificationScreen from "./screens/NotificationScreen";
 import NotificationTestScreen from "./screens/NotificationTestScreen";
 import OfflineSettingsScreen from "./screens/OfflineSettingsScreen";
+import SettingsScreen from "./screens/SettingsScreen";
+import LocalStorageViewerScreen from "./screens/LocalStorageViewerScreen";
+import NetworkStatusScreen from "./screens/NetworkStatusScreen";
+import AppStateMonitorScreen from "./screens/AppStateMonitorScreen";
 
 const Stack = createNativeStackNavigator();
 
@@ -60,6 +66,10 @@ function MainStack(): JSX.Element {
       <Stack.Screen name="Debug" component={DebugScreen} />
       <Stack.Screen name="ApiTest" component={ApiTestScreen} />
       <Stack.Screen name="OfflineSettings" component={OfflineSettingsScreen} />
+      <Stack.Screen name="Settings" component={SettingsScreen} />
+      <Stack.Screen name="LocalStorageViewer" component={LocalStorageViewerScreen} />
+      <Stack.Screen name="NetworkStatus" component={NetworkStatusScreen} />
+      <Stack.Screen name="AppStateMonitor" component={AppStateMonitorScreen} />
     </Stack.Navigator>
   );
 }
@@ -104,11 +114,14 @@ export default function App(): JSX.Element {
       <AuthProvider>
         <NotificationProvider>
           <OfflineProvider>
-            <Toaster />
-            <NavigationContainer>
-              <RootNavigator />
-            </NavigationContainer>
-            <OfflineIndicator showDetails={true} />
+            <DevModeProvider>
+              <Toaster />
+              <NavigationContainer>
+                <RootNavigator />
+              </NavigationContainer>
+              <OfflineIndicator />
+              <DevModeIndicator />
+            </DevModeProvider>
           </OfflineProvider>
         </NotificationProvider>
       </AuthProvider>
