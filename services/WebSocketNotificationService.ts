@@ -3,7 +3,7 @@ import { debugLogger } from '../utils/DebugLogger';
 const logger = debugLogger;
 
 // Base URL for WebSocket connections
-const WS_BASE_URL = 'ws://192.168.1.4:8080/hubs/notifications';
+const WS_BASE_URL = 'wss://test.scorptech.co/hubs/notifications';
 
 export interface WebSocketConnection {
   isConnected: boolean;

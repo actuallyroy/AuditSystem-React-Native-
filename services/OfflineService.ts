@@ -168,7 +168,7 @@ class OfflineService {
         return false;
       }
 
-      const url = `http://192.168.1.4:8080/api/v1${operation.endpoint}`;
+      const url = `https://test.scorptech.co/api/v1${operation.endpoint}`;
       
       const options: RequestInit = {
         method: operation.method,

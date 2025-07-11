@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-const API_BASE_URL = 'http://192.168.1.4:8080/api/v1';
+const API_BASE_URL = 'https://test.scorptech.co/api/v1';
 
 export default function ApiTestScreen({ navigation }: any) {
   const [username, setUsername] = useState('');

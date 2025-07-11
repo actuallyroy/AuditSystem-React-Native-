@@ -5,7 +5,7 @@ import { storageService } from './StorageService';
 import { networkService } from './NetworkService';
 import { offlineService } from './OfflineService';
 
-const API_BASE_URL = 'http://192.168.1.4:8080/api/v1';
+const API_BASE_URL = 'https://test.scorptech.co/api/v1';
 
 // Enable detailed logging for debugging
 const DEBUG_MODE = true;
@@ -380,6 +380,7 @@ class AuthService {
    * Login a user
    */
   async login(credentials: LoginRequest): Promise<AuthResponse> {
+    debugger
     debugLog('Starting login request', { username: credentials.username, password: '[HIDDEN]' });
     
     try {
